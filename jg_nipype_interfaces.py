@@ -1,3 +1,21 @@
+
+"""
+***************************************************
+
+Interfaces for various Track length etc. functionalities:
+
+	- rewrite_trk_file_with_ED_vs_FL_scalars
+	- make_trk_files_for_connectome_node_list
+	- read_ROI_list
+	
+		
+	- sfpeaks
+	- sflutgen
+	- mesd#
+	
+***************************************************
+"""
+
 from nipype.interfaces.base import BaseInterface, BaseInterfaceInputSpec, traits, TraitedSpec, File
 from nipype.utils.filemanip import split_filename
 
@@ -244,12 +262,28 @@ def read_ROI_list(ROI_xl_file):
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
 """
+***************************************************
+
 Camino interface wrappers:
 		
 	- sfpeaks
 	- sflutgen
-	- mesd
+	- mesd#
+	
+***************************************************
 """
 
 from nipype.interfaces.base import (CommandLineInputSpec, CommandLine, traits,
