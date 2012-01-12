@@ -26,13 +26,23 @@ Contents:
     - picopdsf2fib
 """
 
+import os
+
+import numpy as np
+
+import cfflib
+
+import nibabel as nib
+
+from nipype.interfaces.cmtk.cmtk import length as fib_length
+
 from nipype.interfaces.base import (CommandLineInputSpec, CommandLine, traits,
                                     TraitedSpec, File, StdOutCommandLine,
-                                    StdOutCommandLineInputSpec, isdefined)
+                                    StdOutCommandLineInputSpec, BaseInterface,
+                                     BaseInterfaceInputSpec, isdefined)
 
 from nipype.utils.filemanip import split_filename
 
-import os
 
 
 class SfPeaksInputSpec(StdOutCommandLineInputSpec):
@@ -80,7 +90,7 @@ class SfPeaksInputSpec(StdOutCommandLineInputSpec):
 
     inputdatatype = traits.Enum('float', 'char', 'short', 'int', 'long', 'double', argstr='-inputdatatype %s',desc='Specifies the data type of the input file: "char", "short", "int", "long", "float" or "double". The input file must have BIG-ENDIAN ordering. By default, the input type is "float".')
 
-    out_type = traits.Enum("float", "char", "short", "int", "long", "double", argstr='-outputdatatype %s',usedefault=True,desc='"i.e. Bfloat". Can be "char", "short", "int", "long", "float" or "double
+    out_type = traits.Enum("float", "char", "short", "int", "long", "double", argstr='-outputdatatype %s',usedefault=True,desc= "Can be ""char"", ""short"", ""int"", ""long"", ""float"" or ""double")
 class SfPeaksOutputSpec(TraitedSpec):
     SfPeaks_file = File(exists=True, desc='SfPeaks_file')
 
@@ -212,11 +222,11 @@ class SfLUTGen(StdOutCommandLine):
     def _list_outputs(self):
         outputs = self.output_spec().get()
         for k in outputs.keys():
-        outputs[k] = self._gen_outfilefname(k)
+            outputs[k] = self._gen_outfilefname(k)
         return outputs
 
     def _gen_outfilename(self,suffix):
-    return self.inputs.outfilestem+'_'+suffix+'.Bdouble'
+        return self.inputs.outfilestem+'_'+suffix+'.Bdouble'
 
 
 
@@ -400,13 +410,9 @@ class TrackInputSpec(CommandLineInputSpec):
     
     outputtracts = traits.Enum('float', 'double', 'oogl', argstr='-outputtracts %s', desc='output tract file type')
     
-    out_file = File(argstr='-outputfile %s',
-        position= -1, genfile=True,
-        desc='output data file')
-
-        output_root = File(exists=False, argstr='-outputroot %s',
-        mandatory=False, position= -1,
-        desc='root directory for output')
+    out_file = File(argstr='-outputfile %s', position= -1, genfile=True, desc='output data file')      
+    
+    output_root = File(exists=False, argstr='-outputroot %s', mandatory=False, position= -1 ,desc='root directory for output')
 
 class TrackOutputSpec(TraitedSpec):
     tracked = File(exists=True, desc='output file containing reconstructed tracts')
@@ -557,12 +563,12 @@ class PicoPDFs2Fib(StdOutCommandLine):
 
 
     def _list_outputs(self):
-    outputs = self.output_spec().get()
-    if not isdefined(self.inputs.out_file): # JG MOD: have added in this if clause, as with other modified functions, so that it doesn't error if you use the interface outside of a workflow
-        outputs['pdfs'] = os.path.abspath(self._gen_outfilename())
-    else:
-        outputs['pdfs'] = self.inputs.out_file
-    return outputs
+        outputs = self.output_spec().get()
+        if not isdefined(self.inputs.out_file): # JG MOD: have added in this if clause, as with other modified functions, so that it doesn't error if you use the interface outside of a workflow
+            outputs['pdfs'] = os.path.abspath(self._gen_outfilename())
+        else:
+            outputs['pdfs'] = self.inputs.out_file
+        return outputs
 
 
     def _gen_outfilename(self):
