@@ -1,16 +1,17 @@
 """
-========================================================================
- jg_custom_interfaces.py - nipype wrappers for various python functions
-========================================================================
+==========================================================================
+ jg_custom_interfaces.py - nipype wrappers for various jg python functions
+==========================================================================
 
                                                          JDG 11/01/2012  
                                     
 Contents:
 ---------
 
-	- rewrite_trk_file_with_ED_vs_FL_scalars
+	- read ROI_geom
+	- read_ROI_list	
 	- make_trk_files_for_connectome_node_list
-	- read_ROI_list
+	- rewrite_trk_file_with_ED_vs_FL_scalars
 	- apply_QuickBundles_to_connectome_cnxns
 	- apply_QuickBundles_to_trk_files
 	- apply_flirt_to_fibs
@@ -34,12 +35,382 @@ import nibabel as nib
 
 from nipype.interfaces.cmtk.cmtk import length as fib_length
 
-
 from nipype.interfaces.base import (CommandLineInputSpec, CommandLine, traits,
                                     TraitedSpec, File, StdOutCommandLine,
-                                    StdOutCommandLineInputSpec, BaseInterface, BaseInterfaceInputSpec, isdefined)
+                                    StdOutCommandLineInputSpec, BaseInterface,
+                                     BaseInterfaceInputSpec, isdefined)
 
 from nipype.utils.filemanip import split_filename
+
+from dipy.io.pickles import save_pickle
+import pickle as pkl 
+
+from numpy import newaxis
+
+from nipy.algorithms.utils.affines import apply_affine
+
+#def get_geoms(img,indices,voxel_dimensions, label):
+def get_ROI_geom(img,dat=None): #indices,voxel_dimensions, label):
+    """
+    [ IF THIS TAKES AGES FOR LAST VOLUMES, TRY VECTORIZING CODE...]
+    [ YES I THINK IT'S TAKING TOO LONG - NEED TO TRY THAT ]
+    [add proper doc]
+    'dat' is an optional argument that, when specified, 
+    is used to provide the data array, rather than 
+    extracting it from the img object. So the dat argument
+    can be used when you want to produce an ROI from an
+    from an image within python on the fly without writing
+    it out to file
+    """
+    if dat == None:
+        img_dat = img.get_data()
+    else:
+        img_dat = dat 
+    inds = np.nonzero(img_dat)
+    voxdims = img.get_header().get_zooms()
+    nvox = len(inds[0]) # number of voxels
+    print '\n     # voxels = ' + str(nvox) 
+    vol = len(inds[0])*(voxdims[0]*voxdims[1]*voxdims[2])
+    print '\n volume (mm3) = ' + str(vol)
+    geom_dict = dict([['n_voxels', nvox], ['volume', vol]])
+    diam_dict = get_ROI_diameter(img, img_dat) 
+    geom_dict.update(diam_dict)
+    print '\n     diameter = ' + str(geom_dict['diameter'])                                        
+    print '       ...calculated between '
+    print '          coord_1: ' + str(geom_dict['coord1'])
+    print '          coord_2: ' + str(geom_dict['coord2'])
+    return geom_dict
+
+def get_ROI_diameter(img, dat=None):
+    """
+    [add proper doc]
+    'dat' is an optional argument that, when specified, 
+    is used to provide the data array, rather than 
+    extracting it from the img object. So the dat argument
+    can be used when you want to produce an ROI from an
+    from an image within python on the fly without writing
+    it out to file
+    """
+    print ' WARNING: HAVENT YET CONFIRMED THAT GET_ROI_DIAMETER WORKS!!!'
+    if dat == None:
+        img_dat = img.get_data()
+    else:
+        img_dat = dat 
+    inds = np.nonzero(img_dat)
+    
+    img_coords = get_img_coords(img)
+    img_dat_coords = img_coords[inds]
+    
+    extremas = []
+    for n in [0,1,2]:
+        maxval= max(img_dat_coords[:,n])
+        maxvalinds = np.nonzero(img_dat_coords[:,n]==maxval)
+        [extremas.append(mv) for mv in img_dat_coords[maxvalinds,:][0]]
+
+        minval= min(img_dat_coords[:,n])
+        minvalinds = np.nonzero(img_dat_coords[:,n]==minval)
+        [extremas.append(mv) for mv in img_dat_coords[minvalinds,:][0]]
+    
+    diam = 0    
+    for c1 in extremas:
+        for c2 in extremas:
+            eudist = sum(np.sqrt((c1-c2)**2))
+            if eudist>diam:
+                diam=eudist
+                coord1=c1
+                coord2=c2
+    diam_dict = dict([['diameter', diam], ['coord1', coord1], ['coord2', coord2]])
+    return diam_dict
+
+
+
+def get_img_coords(img):
+    """
+    [add proper doc]
+    courtesy of E.Garyfallidis
+    """
+    print ' WARNING: HAVENT YET CONFIRMED THAT GET_IMG_COORDS WORKS!!!'
+    i,j,k = img.shape
+    coords = np.zeros([i,j,k,3])
+    coords[...,0] = np.arange(i)[:,newaxis,newaxis]
+    coords[...,1] = np.arange(j)[newaxis,:,newaxis]
+    coords[...,2] = np.arange(k)[newaxis,newaxis,:]
+    aff = img.get_affine()
+    img_mm = apply_affine(aff, coords)
+    return img_mm
+
+
+class read_ROI_geom_InputSpec(BaseInterfaceInputSpec):
+    
+    ROI_file = File(exists=True, desc='ROI image file',argstr='%s')
+    use_labels = traits.Bool(argstr='%s',desc='use labels')
+    output_type = traits.Enum('pickled_dict', 'txt_file', 'screen_only', argstr='%s',desc='type of output')
+    outfilename = traits.String(argstr = '%', desc='output ROI geometry file', mandatory=False)
+    
+class read_ROI_geom_OutputSpec(TraitedSpec):        
+    
+    ROI_geom_list = File(exists=True, desc="ROI geometry info file")
+
+
+class read_ROI_geom(BaseInterface):
+    """   
+    Info
+    ----
+   
+    Calculates basic geometric properties (number of voxels, volume, [others?])
+    of regions of interest (ROIs) in a nifti / analyze image. When a labelled 
+    image (i.e. one with multiple values defining sub-regions), and the 'use_labels'
+    input argument is set to True, geometric properties are calculated for each 
+    unique voxel value in the image. Otherwise, it is assumed that the image is 
+    a single ROI (potentially with multiple voxel values), and geometries are 
+    calculated once for all nonzero voxels together.Outputs can be to screen, to
+     .txt file, or a numpy array
+    
+    Inputs:
+    -------
+            ROI_file     - nifti/analyze image
+            use_labels   - Boolean 
+            output_type  - 'pickled_dict', 'txt_file', or 'screen_only'
+            out_file     - name of output file (generated automatically from 
+                           ROI_file if left blank )
+            
+    Outputs:
+    --------
+            ROI_geom_list - '.npy' or '.txt' file if selected
+    
+    Example:
+    -------
+            get_geom = jg_custom_interface.read_ROI_geom()
+            get_geom.inputs.ROI_file = <filename>
+            get_geom.inputs.use_labesls = True
+            get_geom.inputs.output_type = 'pickled_dict'
+            get_geom.inputs.outfilename = <filename>
+            get_geom.run()   
+    """
+    input_spec = read_ROI_geom_InputSpec
+    output_spec = read_ROI_geom_OutputSpec
+
+    def _run_interface(self,runtime):
+            
+            img = nib.load(self.inputs.ROI_file)
+            img_dat = img.get_data()
+            blank_img = np.zeros(img_dat.shape)
+            vox_dims = img.get_header().get_zooms()
+            
+            
+            if self.inputs.use_labels==False:
+                labels = 'all_nonzero'
+            else:
+                labels = list(np.unique(img_dat))
+                labels.remove(0)  # remove label '0'
+            
+            geoms_dict_all_labels = {}
+            #geoms_array = np.zeros([len(labels),6])
+            geoms_list_all_labels = []
+            
+            for l in range(0, len(labels)):
+                print '\n label = ' + str(labels[l])
+                if labels=='all_nonzero':
+                    inds = np.nonzero(img_dat)
+                else:
+                    inds = np.nonzero(img_dat==labels[l])
+                new_img_dat = np.zeros(img_dat.shape)
+                new_img_dat[inds] = np.ones(len(inds[0]))
+                geoms_dict = get_ROI_geom(img, new_img_dat)
+                geoms_dict_all_labels[labels[l]] = geoms_dict
+                
+                #geoms_array[l+1,0] = labels[l]
+                #geoms_array[l+1,1:] = np.array(geoms_dict.values())
+                geoms_list = geoms_dict.values()
+                geoms_list.insert(0,l)
+                geoms_list_all_labels.append(geoms_list)
+                #for gd in geoms_dict.keys():
+                #    geoms_dict_all_labels[l,gd] = geoms_dict[gd]
+
+            geoms_list_headers = geoms_dict.keys()
+            geoms_list_headers.insert(0, 'label')
+            geoms_list_all_labels.insert(0, geoms_list_headers)
+            #geoms_array[0,0] = 'label'
+            #geoms_array[0,1:] = np.array(geoms_dict.keys())
+            
+            outfilename = self._gen_outfilename()                            
+            
+            geoms_all = dict([['dict',geoms_dict_all_labels],['list', geoms_list_all_labels]])
+            
+            print '\n saving to ' + outfilename + '\n'
+            if self.inputs.output_type == 'pickled_dict':
+                save_pickle(outfilename, geoms_all)
+            elif self.inputs.output_type == 'txt_file':
+                f = open(outfilename, 'w')
+                f.writelines(["%s\n" % str(gl) for gl in geoms_list])
+                #f.writelines(list( '%s \n ' % gl for gl in geoms_list))
+                f.close()           
+            elif self.inputs.output_type == 'screen_only':
+                print 'output to screen only - no file written'
+               
+            return runtime
+    
+        
+                
+    def _gen_outfilename(self):
+        if isdefined(self.inputs.outfilename):
+            fname = self.inputs.outfilename
+        else:
+            _, name , _ = split_filename(self.inputs.ROI_file)
+            if self.inputs.output_type == 'pickled_dict':
+                fname = name + '_pickled_dict.pkl'
+            elif self.inputs.output_type == 'txt_file':
+                fname = name+'_ROI_geom.txt'
+        return fname
+    
+    def _list_outputs(self):    
+        outputs = self._outputs().get()
+        fname = self._gen_outfilename()
+        outputs["ROI_geom_list"] = fname
+        return outputs
+
+
+
+def read_ROI_list(ROI_xl_file):
+    """
+    Reads in an excel file with two columns: 
+    ROI numbers (left column) and ROI names (right column),
+    and returns a dictionary that maps between the two
+    
+    Note - in the excel file the ROI list needs to start 
+    from the 3rd row (first two rows are column headers)
+    
+    Usage: 
+    
+    ROI_list_dict = jg_nipype_interfacs.read_ROI_list(ROI_xl_file)
+    
+    """
+    import xlrd
+    ROI_list_dict = {}
+    wb = xlrd.open_workbook(ROI_xl_file)
+    sh = wb.sheets()[0]
+    for r in range(2, len(sh.col_values(0))):
+        ROI_list_dict[int(sh.col_values(0)[r])] = sh.col_values(1)[r] 
+    return ROI_list_dict        
+
+
+class make_trk_files_for_connectome_node_list_InputSpec(BaseInterfaceInputSpec):
+    
+    ROI_xl_file1 = File(exists=True, desc='excel file with list of node ROI numbers to identify', mandatory=True)
+    ROI_xl_file2 = File(exists=True, desc='second excel file with list of node ROI numbers to identify', mandatory=False)
+    cff_file = File(exists=True, desc='.cff (connectome file format file)', mandatory=True)
+    trk_file_orig = File(exists=True, desc='original track file', mandatory=True)
+    trk_file_new = traits.String(argstr = '%s', desc='base name of name of new track files to be made', mandatory=True)
+    n_fib_thresh = traits.Int(1,desc='minimum number of fibres between node pairs', usedefault=True)
+    cff_track_name =traits.String('Tract file 0', desc='name of track file in cff object. Default = ''Tract file 0', usedefault=True)
+    cff_labels_name =traits.String('data_DT_pdfs_tracked_filtered_fiberslabel', desc='name of labels array in cff object. Default = ' 'data_DT_pdfs_tracked_filtered_fiberslabel',usedefault=True)
+    cff_network_number = traits.Int(0,desc='number (index - e.g. 0, 1, 2) of network file in cff object. Default is 0', usedefault=True)    
+    # (not using a name and the '.get_by_name' cff method for this atm because there isn't a standard default name for the network (Swederik's
+    #  workflows use subject number, which is not constant across subjs), and I'm not sure hwo to tell nipype to do something when nothing has
+    # been entered for non-mandatory inputs but there is no default value (the default would be to use the network index number, as is currently
+    # being used). I think it needs to be something like 'if self.inputs.cff_network_name==None: ', but 'None' doesn't work    
+
+class make_trk_files_for_connectome_node_list_OutputSpec(TraitedSpec):
+    
+    trk_file_new = File(exists=False, desc="trk_file_new")
+        
+class make_trk_files_for_connectome_node_list(BaseInterface):
+    """
+    Outputs a new .trk file containing a subset of the fibres in the 
+    trk_file_orig input, selected according to either one or two excel files,
+    each with 2 columns - one for node numbers and one for region names.
+    Input a single excel file for for cnxns within one group of nodes, or 
+    two excel files for cnxns between two groups of nodes. A number of fibres
+    threshold can be used to exclude 'low probability' connections.
+    
+    Usage: 
+        m = jg_nipype_interfaces.make_trk_files_for_connectome_node_list()
+        m.inputs.trk_file_orig =  <original track file>
+        m.inputs.trk_file_new  =  <new track file to be written>
+        m.inputs.ROI_xl_file1  =  <excel list of ROI numbers
+        m.inputs.ROI_xl_file2  =  (leave blank if only looking@cnxns within 1 group of nodes)
+        m.inputs.cff_file      =  <connectome file>
+        m.inputs.n_fib_thresh  =  <minimum number of fibres for each cnxn>
+        m.run()                
+    """
+    input_spec = make_trk_files_for_connectome_node_list_InputSpec
+    output_spec = make_trk_files_for_connectome_node_list_OutputSpec
+    
+    def _run_interface(self,runtime):
+        print 'running interface'        
+        c = cfflib.load(self.inputs.cff_file)
+        c_track = c.get_by_name(self.inputs.cff_track_name)            
+        c_labels = c.get_by_name(self.inputs.cff_labels_name)
+        c_network = c.get_connectome_network()[self.inputs.cff_network_number]
+        """
+        (want to have something like this (above) for c_network, using 'get_by_name' 
+         as with c_track and c_labels above):
+        if self.inputs.cff_network_name == None:
+            c_network = c.get_by_name(self.inputs.cff_network_name)    
+        else:
+            c_network = c.get_by_name(self.inputs.cff_network_name)
+        (...but not sure what to put for the '==None' bit (which doesn't work)        
+        """        
+        c_track.load()
+        c_labels.load()
+        c_network.load()
+        print 'loading fibres...'
+        fibres_orig, hdr_orig = nib.trackvis.read(self.inputs.trk_file_orig, False)
+        print str(len(fibres_orig)) + ' fibres loaded'    
+        if not len(fibres_orig) == len(c_labels.data):
+            print 'ERROR: TRK FILE IS NOT SAME SIZE AS FIBRE LABELS ARRAY' # (this needs to be an actual error exception that stops the function) 
+        if self.inputs.ROI_xl_file2 == None:
+            two_node_lists = 0
+            ROI_list_dict1 = read_ROI_list(self.inputs.ROI_xl_file1)
+            ROI_list_dict2 = ROI_list_dict1    
+        elif not self.inputs.ROI_xl_file2 == None:
+            two_node_lists = 1
+            ROI_list_dict1 = read_ROI_list(self.inputs.ROI_xl_file1)
+            ROI_list_dict2 = read_ROI_list(self.inputs.ROI_xl_file2)
+        track_indices = []                
+        for k in range(0, len(ROI_list_dict1.keys())):
+            for kk in range(0,len(ROI_list_dict2.keys())):
+                ROI1_name = str(ROI_list_dict1.values()[k])
+                ROI1_number = int(ROI_list_dict1.keys()[k])
+                ROI2_name = str(ROI_list_dict2.values()[kk])
+                ROI2_number = int(ROI_list_dict2.keys()[kk])
+                node_indices = [ROI1_number,ROI2_number]
+                node_indices_reversed = [ROI2_number, ROI1_number]
+                a = np.nonzero(c_labels.data==ROI1_number)[0]
+                b = np.nonzero(c_labels.data==ROI2_number)[0]
+                if ROI1_number in c_network.data.edge[ROI2_number]:
+                    n_fibs = c_network.data.edge[ROI2_number][ROI1_number]['number_of_fibers']
+                elif ROI2_number in c_network.data.edge[ROI1_number]:
+                    n_fibs = c_network.data.edge[ROI1_number][ROI2_number]['number_of_fibers']
+                else: n_fibs = 0
+                if n_fibs>=self.inputs.n_fib_thresh:
+                    #print 'node indices = ' + str(ROI1_number) + ' ' + str(ROI2_number)
+                    for a_int in a:
+                        if a_int in b:
+                            if two_node_lists == 0:
+                                if kk>k:
+                                    track_indices.append(a_int)
+                                    print 'found track - index ' + str(a_int) + ' , ROIs ' + str(ROI1_number) + ', ' + str(ROI2_number)    
+                            else: 
+                                track_indices.append(a_int)
+                                print 'found track - index ' + str(a_int) + ' , ROIs ' + str(ROI1_number) + ', ' + str(ROI2_number)
+        if not track_indices == []:    
+            hdr_new = hdr_orig.copy()
+            outstreams = []
+            for i in track_indices:
+                outstreams.append(fibres_orig[i])
+            n_fib_out = len(outstreams)
+            hdr_new['n_count'] = n_fib_out    
+            nib.trackvis.write(self.inputs.trk_file_new, outstreams, hdr_new)
+        else:
+            print 'no tracks found'        
+        return runtime
+    
+    def _list_outputs(self):    
+        outputs = self._outputs().get()
+        fname = self.inputs.trk_file_new
+        outputs["trk_file_new"] = fname
+        return outputs
 
 
 
@@ -132,148 +503,6 @@ class rewrite_trk_file_with_ED_vs_FL_scalars(BaseInterface):
 		outputs["trk_file_new"] = fname
 		return outputs
 	
-
-
-class make_trk_files_for_connectome_node_list_InputSpec(BaseInterfaceInputSpec):
-	
-	ROI_xl_file1 = File(exists=True, desc='excel file with list of node ROI numbers to identify', mandatory=True)
-	ROI_xl_file2 = File(exists=True, desc='second excel file with list of node ROI numbers to identify', mandatory=False)
-	cff_file = File(exists=True, desc='.cff (connectome file format file)', mandatory=True)
-	trk_file_orig = File(exists=True, desc='original track file', mandatory=True)
-	trk_file_new = traits.String(argstr = '%s', desc='base name of name of new track files to be made', mandatory=True)
-	n_fib_thresh = traits.Int(1,desc='minimum number of fibres between node pairs', usedefault=True)
-	cff_track_name =traits.String('Tract file 0', desc='name of track file in cff object. Default = ''Tract file 0', usedefault=True)
-	cff_labels_name =traits.String('data_DT_pdfs_tracked_filtered_fiberslabel', desc='name of labels array in cff object. Default = ' 'data_DT_pdfs_tracked_filtered_fiberslabel',usedefault=True)
-	cff_network_number = traits.Int(0,desc='number (index - e.g. 0, 1, 2) of network file in cff object. Default is 0', usedefault=True)	
-	# (not using a name and the '.get_by_name' cff method for this atm because there isn't a standard default name for the network (Swederik's
-	#  workflows use subject number, which is not constant across subjs), and I'm not sure hwo to tell nipype to do something when nothing has
-	# been entered for non-mandatory inputs but there is no default value (the default would be to use the network index number, as is currently
-	# being used). I think it needs to be something like 'if self.inputs.cff_network_name==None: ', but 'None' doesn't work	
-
-class make_trk_files_for_connectome_node_list_OutputSpec(TraitedSpec):
-	
-	trk_file_new = File(exists=False, desc="trk_file_new")
-		
-class make_trk_files_for_connectome_node_list(BaseInterface):
-	"""
-	Outputs a new .trk file containing a subset of the fibres in the 
-	trk_file_orig input, selected according to either one or two excel files,
-	each with 2 columns - one for node numbers and one for region names.
-	Input a single excel file for for cnxns within one group of nodes, or 
-	two excel files for cnxns between two groups of nodes. A number of fibres
-	threshold can be used to exclude 'low probability' connections.
-	
-	Usage: 
-		m = jg_nipype_interfaces.make_trk_files_for_connectome_node_list()
-		m.inputs.trk_file_orig =  <original track file>
-		m.inputs.trk_file_new  =  <new track file to be written>
-		m.inputs.ROI_xl_file1  =  <excel list of ROI numbers
-		m.inputs.ROI_xl_file2  =  (leave blank if only looking@cnxns within 1 group of nodes)
-		m.inputs.cff_file      =  <connectome file>
-		m.inputs.n_fib_thresh  =  <minimum number of fibres for each cnxn>
-		m.run()				
-	"""
-	input_spec = make_trk_files_for_connectome_node_list_InputSpec
-	output_spec = make_trk_files_for_connectome_node_list_OutputSpec
-	
-	def _run_interface(self,runtime):
-		print 'running interface'		
-		c = cfflib.load(self.inputs.cff_file)
-		c_track = c.get_by_name(self.inputs.cff_track_name)			
-		c_labels = c.get_by_name(self.inputs.cff_labels_name)
-		c_network = c.get_connectome_network()[self.inputs.cff_network_number]
-		"""
-		(want to have something like this (above) for c_network, using 'get_by_name' 
-		 as with c_track and c_labels above):
-		if self.inputs.cff_network_name == None:
-			c_network = c.get_by_name(self.inputs.cff_network_name)	
-		else:
-			c_network = c.get_by_name(self.inputs.cff_network_name)
-		(...but not sure what to put for the '==None' bit (which doesn't work)		
-		"""		
-		c_track.load()
-		c_labels.load()
-		c_network.load()
-		print 'loading fibres...'
-		fibres_orig, hdr_orig = nib.trackvis.read(self.inputs.trk_file_orig, False)
-		print str(len(fibres_orig)) + ' fibres loaded'	
-		if not len(fibres_orig) == len(c_labels.data):
-			print 'ERROR: TRK FILE IS NOT SAME SIZE AS FIBRE LABELS ARRAY' # (this needs to be an actual error exception that stops the function) 
-		if self.inputs.ROI_xl_file2 == None:
-			two_node_lists = 0
-			ROI_list_dict1 = read_ROI_list(self.inputs.ROI_xl_file1)
-			ROI_list_dict2 = ROI_list_dict1	
-		elif not self.inputs.ROI_xl_file2 == None:
-			two_node_lists = 1
-			ROI_list_dict1 = read_ROI_list(self.inputs.ROI_xl_file1)
-			ROI_list_dict2 = read_ROI_list(self.inputs.ROI_xl_file2)
-		track_indices = []				
-		for k in range(0, len(ROI_list_dict1.keys())):
-			for kk in range(0,len(ROI_list_dict2.keys())):
-				ROI1_name = str(ROI_list_dict1.values()[k])
-				ROI1_number = int(ROI_list_dict1.keys()[k])
-				ROI2_name = str(ROI_list_dict2.values()[kk])
-				ROI2_number = int(ROI_list_dict2.keys()[kk])
-				node_indices = [ROI1_number,ROI2_number]
-				node_indices_reversed = [ROI2_number, ROI1_number]
-				a = np.nonzero(c_labels.data==ROI1_number)[0]
-				b = np.nonzero(c_labels.data==ROI2_number)[0]
-				if ROI1_number in c_network.data.edge[ROI2_number]:
-					n_fibs = c_network.data.edge[ROI2_number][ROI1_number]['number_of_fibers']
-				elif ROI2_number in c_network.data.edge[ROI1_number]:
-					n_fibs = c_network.data.edge[ROI1_number][ROI2_number]['number_of_fibers']
-				else: n_fibs = 0
-				if n_fibs>=self.inputs.n_fib_thresh:
-					#print 'node indices = ' + str(ROI1_number) + ' ' + str(ROI2_number)
-					for a_int in a:
-						if a_int in b:
-							if two_node_lists == 0:
-								if kk>k:
-									track_indices.append(a_int)
-									print 'found track - index ' + str(a_int) + ' , ROIs ' + str(ROI1_number) + ', ' + str(ROI2_number)	
-							else: 
-								track_indices.append(a_int)
-								print 'found track - index ' + str(a_int) + ' , ROIs ' + str(ROI1_number) + ', ' + str(ROI2_number)
-		if not track_indices == []:	
-			hdr_new = hdr_orig.copy()
-			outstreams = []
-			for i in track_indices:
-				outstreams.append(fibres_orig[i])
-			n_fib_out = len(outstreams)
-			hdr_new['n_count'] = n_fib_out	
-			nib.trackvis.write(self.inputs.trk_file_new, outstreams, hdr_new)
-		else:
-			print 'no tracks found'		
-		return runtime
-	
-	def _list_outputs(self):	
-		outputs = self._outputs().get()
-		fname = self.inputs.trk_file_new
-		outputs["trk_file_new"] = fname
-		return outputs
-
-
-def read_ROI_list(ROI_xl_file):
-	"""
-	Reads in an excel file with two columns: 
-	ROI numbers (left column) and ROI names (right column),
-	and returns a dictionary that maps between the two
-	
-	Note - in the excel file the ROI list needs to start 
-	from the 3rd row (first two rows are column headers)
-	
-	Usage: 
-	
-	ROI_list_dict = jg_nipype_interfacs.read_ROI_list(ROI_xl_file)
-	
-	"""
-	import xlrd
-	ROI_list_dict = {}
-	wb = xlrd.open_workbook(ROI_xl_file)
-	sh = wb.sheets()[0]
-	for r in range(2, len(sh.col_values(0))):
-		ROI_list_dict[int(sh.col_values(0)[r])] = sh.col_values(1)[r] 
-	return ROI_list_dict		
 
 
 
@@ -636,31 +865,17 @@ class apply_flirt_to_fibs(BaseInterface):
 				et = [np.dot(ee, aff[:3,:3].T)+aff[:3,3] for ee in e]
 				flirted_Ets.append(et)
 			flirted_fibs[QB_names_dict['Ets']] = flirted_Ets
-	
+            
 			flirted_Vs = []
 			for v in Vs:
 				vt = [np.dot(vv, aff[:3,:3].T)+aff[:3,3] for vv in v]
 				flirted_Vs.append(vt)
 			flirted_fibs[QB_names_dict['Vs']] = flirted_Vs
 			
-			
-			"""
-			Create new header 
-			(check this gives same as applying affine to the DWIspace header?)
-			
-			new_hdr = nib.trackvis.empty_header()
-			ref_aff = ref_img.get_affine()
-			nib.trackvis.aff_to_hdr(ref_aff,new_hdr)
-			new_hdr['dim'] = ref_img.shape
-			flirted_fibs[QB_names_dict['hdr_orig']] = new_hdr # Need to change from 'hdr_orig' to just 'hdr'
-			"""
-			
 			# Apply flirt transform to the trackvis hdr
+            # NOTE: STILL NEED TO CHECK THE .TRK FILES FROM THIS
 			hdr_copy = hdr_orig.copy()
-			aff_orig = nib.trackvis.aff_from_hdr(hdr_orig, atleast_v2=None)
-			aff_new = np.dot(aff_orig,aff[:3,:3].T)+aff[:3,3]
-			nib.trackvis.aff_to_hdr(aff_new,hdr_copy, pos_vox=None, set_order=None)
-			hdr_copy['dim'] = ref_img.shape
+			nib.trackvis.aff_to_hdr(aff,hdr_copy)#, pos_vox=None, set_order=None)
 			flirted_fibs[QB_names_dict['hdr_orig']] = hdr_copy # Need to change from 'hdr_orig' to just 'hdr'
 			
 			# NOTE: FLIRT OTHER THINGS - C, Ei, Tploy, Skeleton?
@@ -700,6 +915,8 @@ class apply_flirt_to_fibs(BaseInterface):
 
 class write_QuickBundles_to_trk_InputSpec(BaseInterfaceInputSpec):
 	
+    
+    
 	QB_pkl_file = traits.String(argstr = '%s', desc='name  of .pkl file containing QB results')	
 	QB_output_type = traits.Enum('Ts_Ets_Vs', 'Ts', 'Ets', 'Vs', argstr='%s', desc='quickbundle output to write: ''Ts'', ''Ets'', ''Vs'', or ''Ts_Ets_Vs''') 
 	#QB_all_data = traits.List()
@@ -1005,6 +1222,7 @@ class apply_QuickBundles_to_QB_pkl_files(BaseInterface):
 		outputs["Ets_file_new"] = self._Ets_file_new_path
 		outputs["Vs_file_new"] = self._Vs_file_new_path
 		return outputs
+
 
 
 
