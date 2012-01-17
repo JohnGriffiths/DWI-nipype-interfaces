@@ -15,6 +15,26 @@ Contents:
 	
 """
 
+import os
+
+import numpy as np
+
+import cfflib
+
+import nibabel as nib
+
+from nipype.interfaces.cmtk.cmtk import length as fib_length
+
+from nipype.interfaces.base import (CommandLineInputSpec, CommandLine, traits,
+                                    TraitedSpec, File, StdOutCommandLine,
+                                    StdOutCommandLineInputSpec, BaseInterface,
+                                     BaseInterfaceInputSpec, isdefined)
+
+
+from nipype.utils.filemanip import split_filename
+
+
+
 class trackvis_track_transform_InputSpec(CommandLineInputSpec):
 
 	input_track_file = File(exists=True, argstr='%s',desc='name of input .trk file', position=1)
