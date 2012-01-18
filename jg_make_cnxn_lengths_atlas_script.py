@@ -210,7 +210,7 @@ jg_make_connectomes_from_existing_tracks_workflow/Connectomes'
 
 #subject_list = ['CBU100527', 'CBU100631', 'CBU100947', 'CBU100256', 'CBU100948','CBU100562',
 #                'CBU100523','CBU100770','CBU100578']
-subject_list = ['CBU100160']
+subject_list = ['CBU100160', 'CBU100527']
 #subject_list = ['CBU100253']
 # Looks like it won't run the 2nd level analysis if you run the 1st level with just a single
 # subject because the input ends up being a string (single filename) rather than a list of filenames
@@ -351,7 +351,7 @@ l1_aff_trk_Vs.inputs.registration_type = 'flirt'
 
 # 2e: Write out the affine-transformed tracks to trackvis format (.trk) files
          
-"""
+
 # COMMENTED OUT UNTIL I GET THE AFFINE TRANSFORM ON THE HEADER WORKING     
 # Node: #l1_write_aff_pkl_QB_Ts_Ets_Vs_to_trk' - writes l1_aff_pkl_QB 'Ts', 'Ets', 'and 'Vs' to single .trk files
 l1_write_aff_QB_Ts_Ets_Vs_to_trk = pe.Node(interface=jci.write_QuickBundles_to_trk(), name='l1_write_aff_pkl_QB_Ts_Ets_Vs_to_trk')
@@ -372,7 +372,7 @@ l1_write_aff_QB_Ets_to_trk.inputs.outfile_name_stem = 'aff_pkl_QB_Ets_'
 l1_write_aff_QB_Vs_to_trk = pe.Node(interface=jci.write_QuickBundles_to_trk(), name='l1_write_aff_pkl_QB_Vs_to_trk')
 l1_write_aff_QB_Vs_to_trk.inputs.QB_output_type = 'Vs'
 l1_write_aff_QB_Vs_to_trk.inputs.outfile_name_stem = 'aff_pkl_QB_Vs_'
-"""
+
 
 # 2f: Calculate geometries of ROIs and brain size / volume
 
@@ -436,13 +436,10 @@ l1_wf.connect([(l1_inputnode,l1_aff_trk_Ts,[('flirt_file','registration_matrix_f
 l1_wf.connect([(l1_inputnode,l1_aff_trk_Ets,[('flirt_file','registration_matrix_file')])]) 
 l1_wf.connect([(l1_inputnode,l1_aff_trk_Vs,[('flirt_file','registration_matrix_file')])]) 
 
-"""
-**COMMENTED OUT UNTIL INTERFACE IS FIXED (SEE ABOVE)**
 l1_wf.connect([(l1_aff_pkl_QB, l1_write_aff_QB_Ts_Ets_Vs_to_trk,[('flirted_fibs_file','QB_pkl_file')])]) 
 l1_wf.connect([(l1_aff_pkl_QB, l1_write_aff_QB_Ts_to_trk,[('flirted_fibs_file','QB_pkl_file')])]) 
 l1_wf.connect([(l1_aff_pkl_QB, l1_write_aff_QB_Ets_to_trk,[('flirted_fibs_file','QB_pkl_file')])]) 
 l1_wf.connect([(l1_aff_pkl_QB, l1_write_aff_QB_Vs_to_trk,[('flirted_fibs_file','QB_pkl_file')])]) 
-"""
 
 l1_wf.connect([(l1_inputnode,l1_calculate_ROI_geoms,[('ROI_file','ROI_file')])]) 
 l1_wf.connect([(l1_inputnode,l1_calculate_brain_geoms,[('bet_file','ROI_file')])]) 
@@ -469,15 +466,37 @@ if __name__ == '__main__':
 
 # 4a. Define datasource
 
-
+"""
+THIS MORE OR LESS WORKS:
 l2_info = dict(l1_aff_pkl_QB_file=[['subject_id']])
 l1_subjects_dir = os.path.join(l1_wf.base_dir, l1_wf.name)
 
 # Node:'l2_datasource' - specifies where to grab the outputs of the 1st level analysis
 l2_datasource = pe.Node(interface=nio.DataGrabber(),name='l2_datasource')
 l2_datasource.inputs.base_directory = workflow_base_dir
-l2_datasource.inputs.template = l1_wf.name + '/_subject_id_*/l1_aff_pkl_QB/flirted_fibs_file.pkl'
+#l2_datasource.inputs.template = l1_wf.name + '/_subject_id_*/l1_aff_pkl_QB/flirted_fibs_file.pkl'
+#l2_datasource.inputs.template = l1_wf.name + '/_subject_id_*/_n_fib_thresh_1/l1_aff_pkl_QB/flirted_fibs_file.pkl'
+template_list = []
+[template_list.append(l1_wf.name + '/_subject_id_*/_n_fib_thresh_' + str(t) +
+                                    '/l1_aff_pkl_QB/flirted_fibs_file.pkl') for t in n_fib_thresh_list]
 
+l2_datasource.iterables = ('template', template_list)
+"""
+
+"""
+TRYING THIS OUT FOR BETTER DIRECTORY NAMES:
+"""
+#l2_info = dict(l1_aff_pkl_QB_file=[['subject_id']])
+l1_subjects_dir = os.path.join(l1_wf.base_dir, l1_wf.name)
+
+# Node:'l2_datasource' - specifies where to grab the outputs of the 1st level analysis
+l2_datasource = pe.Node(interface=nio.DataGrabber(infields=['n_fib_thresh_list'],outfields=['pkl_file']),name='l2_datasource')
+l2_datasource.inputs.base_directory = workflow_base_dir
+l2_datasource.inputs.template = '*'
+l2_datasource.inputs.field_template = dict(pkl_file=l1_wf.name+'/_subject_id_*/_n_fib_thresh_%s/l1_aff_pkl_QB/flirted_fibs_file.pkl')
+l2_datasource.inputs.template_args = dict(pkl_file=[['n_fib_thresh_list']])
+
+l2_datasource.iterables = ('n_fib_thresh_list', n_fib_thresh_list)
 
 
 # 4b. Run 2nd level QB clustering
@@ -526,9 +545,9 @@ l2_write_QB_Vs_to_trk.inputs.outfile_name_stem = 'l2_write_QB_Vs_to_trk_'
 l2_wf = pe.Workflow(name='l2_workflow')
 l2_wf.base_dir = workflow_base_dir
 
-l2_wf.connect([(l2_datasource,l2_QB_Ts,[('outfiles','QB_pkl_file_list')])]) 
-l2_wf.connect([(l2_datasource,l2_QB_Ets,[('outfiles','QB_pkl_file_list')])]) 
-l2_wf.connect([(l2_datasource,l2_QB_Vs,[('outfiles','QB_pkl_file_list')])]) 
+l2_wf.connect([(l2_datasource,l2_QB_Ts,[('pkl_file','QB_pkl_file_list')])]) 
+l2_wf.connect([(l2_datasource,l2_QB_Ets,[('pkl_file','QB_pkl_file_list')])]) 
+l2_wf.connect([(l2_datasource,l2_QB_Vs,[('pkl_file','QB_pkl_file_list')])]) 
 
 l2_wf.connect([(l2_QB_Ts,l2_write_QB_Ts_to_trk,[('QB_pkl_file_new','QB_pkl_file')])]) 
 l2_wf.connect([(l2_QB_Ets,l2_write_QB_Ets_to_trk,[('QB_pkl_file_new','QB_pkl_file')])]) 
