@@ -142,14 +142,14 @@ def get_img_coords(img):
 
 class read_ROI_geom_InputSpec(BaseInterfaceInputSpec):
     
-    ROI_file = File(exists=True, desc='ROI image file',argstr='%s')
+    ROI_file = traits.File(exists=True, desc='ROI image file',argstr='%s')
     use_labels = traits.Bool(argstr='%s',desc='use labels')
     output_type = traits.Enum('pickled_dict', 'txt_file', 'screen_only', argstr='%s',desc='type of output')
     outfilename = traits.String(argstr = '%', desc='output ROI geometry file', mandatory=False)
     
 class read_ROI_geom_OutputSpec(TraitedSpec):        
     
-    ROI_geom_list = File(exists=True, desc="ROI geometry info file")
+    ROI_geom_list = traits.File(desc="ROI geometry info file",exists=False)
 
 
 class read_ROI_geom(BaseInterface):
@@ -893,7 +893,7 @@ class apply_flirt_to_fibs(BaseInterface):
 				
 		# write out flirted fibs to new pickle file
 		if isdefined(self.inputs.flirted_fibs_file):
-			self._flirted_fibs_file_path = self.flirted_fibs_file 
+			self._flirted_fibs_file_path = self.inputs.flirted_fibs_file 
 		else:
 			self._flirted_fibs_file_path = os.path.abspath("flirted_fibs_file.pkl")
 		pkl.save_pickle(self._flirted_fibs_file_path, flirted_fibs) # ...other outputs
