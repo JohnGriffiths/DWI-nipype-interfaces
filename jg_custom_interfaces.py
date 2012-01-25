@@ -207,17 +207,23 @@ class read_ROI_geom(BaseInterface):
             geoms_dict_all_labels = {}
             #geoms_array = np.zeros([len(labels),6])
             geoms_list_all_labels = []
-            
-            for l in range(0, len(labels)):
-                print '\n label = ' + str(labels[l])
-                if labels=='all_nonzero':
-                    inds = np.nonzero(img_dat)
-                else:
-                    inds = np.nonzero(img_dat==labels[l])
+           
+            if labels=='all_nonzero':
                 new_img_dat = np.zeros(img_dat.shape)
-                new_img_dat[inds] = np.ones(len(inds[0]))
-                geoms_dict = get_ROI_geom(img, new_img_dat)
-                geoms_dict_all_labels[labels[l]] = geoms_dict
+            if labels=='all_nonzero':
+                inds = np.nonzero(img_dat)	
+                new_img_dat = np.zeros(img_dat.shape)
+		new_img_dat[inds] = np.ones(len(inds[0]))
+                geoms_dict = get_ROI_geom(img, new_img_dat) 
+	        geoms_dict_all_labels['all_nonzero'] = geoms_dict
+            else:
+                for l in range(0, len(labels)):  
+                    print '\n label = ' + str(labels[l]) 
+                    inds = np.nonzero(img_dat==labels[l])
+                    new_img_dat = np.zeros(img_dat.shape) 
+                    new_img_dat[inds] = np.ones(len(inds[0]))
+                    geoms_dict = get_ROI_geom(img, new_img_dat)
+                    geoms_dict_all_labels[labels[l]] = geoms_dict
                 
                 #geoms_array[l+1,0] = labels[l]
                 #geoms_array[l+1,1:] = np.array(geoms_dict.values())
@@ -299,7 +305,11 @@ class make_trk_files_for_connectome_node_list_InputSpec(BaseInterfaceInputSpec):
     ROI_xl_file1 = File(exists=True, desc='excel file with list of node ROI numbers to identify', mandatory=True)
     ROI_xl_file2 = File(exists=True, desc='second excel file with list of node ROI numbers to identify', mandatory=False)
     cff_file = File(exists=True, desc='.cff (connectome file format file)', mandatory=True)
-    trk_file_orig = File(exists=True, desc='original track file', mandatory=True)
+class make_trk_files_for_connectome_node_list_InputSpec(BaseInterfaceInputSpec):
+    
+    ROI_xl_file1 = File(exists=True, desc='excel file with list of node ROI numbers to identify', mandatory=True)
+    ROI_xl_file2 = File(exists=True, desc='second excel file with list of node ROI numbers to identify', mandatory=False)
+    cff_file = File(exists=True, desc='.cff (connectome file format file)', mandatory=True)
     trk_file_new = traits.String(argstr = '%s', desc='base name of name of new track files to be made', mandatory=True)
     n_fib_thresh = traits.Int(1,desc='minimum number of fibres between node pairs', usedefault=True)
     cff_track_name =traits.String('Tract file 0', desc='name of track file in cff object. Default = ''Tract file 0', usedefault=True)
@@ -1178,10 +1188,6 @@ class apply_QuickBundles_to_QB_pkl_files(BaseInterface):
 
 		QB_names = ['QB_names_dict', 'Cs','Ts','skeletons','qbs','Vs','Ets','Eis', 'Tpolys', 'cnxn_list', 'hdr_orig']
 		# want to also add the elements to the QB_data list in this loop, 
-		# but not sure how to do that just yet	
-		QB_names_dict = {}
-		for q in range(0, len(QB_names)):
-			QB_names_dict[QB_names[q]] = q			
 		QB_data =  [ QB_names_dict,  Cs,  Ts,  skeletons,  qbs,  Vs,  Ets,  Eis,   Tpolys,   cnxn_list, hdr_orig] # have removed 'hdr_orig'
 				
 		if isdefined(self.inputs.QB_pkl_file_new):
