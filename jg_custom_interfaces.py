@@ -49,7 +49,258 @@ from numpy import newaxis
 
 from nipy.algorithms.utils.affines import apply_affine
 
-#def get_geoms(img,indices,voxel_dimensions, label):
+import matplotlib.pyplot as plt
+import matplotlib.mlab as mlab
+
+#import ipdb; ipdb.set_trace()
+from IPython import embed
+
+def write_img_stats_to_csv(var1_list, var2_list,filepath,outfilename)
+    """
+    (in my case var1 is subjects and var2 is ROIs)
+    """        
+    for v1 in var1_list:
+        for v2 in var2_list:
+            
+            filepath = 
+    num_nz_voxels,num_nz_voxels_gt_1,
+    pc_nz_voxels_gt_1,mean_FA = get_image_info(filepath)
+    output.append([s,r,mean_FA,num_nz_voxels, num_nz_voxels_gt_1,
+            pc_nz_voxels_gt_1,filepath])
+    
+    # add an empty line 
+    output.append([])
+    
+    # write to a csv file
+    f = open(csv_file)
+    import csv
+    outputfile = csv.writer(f)
+    for line in output:
+        outputfile.writerow(line)
+    f.close()
+    
+    
+  
+
+
+def make_image_histograms(img_files,img_names=None,params_list=None, showfig=False,png_filename=None):
+    """   
+    Info
+    ----
+    Reads in a list of image filenames, and creates an nxm grid
+    of histograms, where n is images and m is different types of
+    histogram on the same image.
+    
+    Currently the default is to make three plots made for each image:
+    
+        1. Image histogram
+        2. Image histogram for nonzero voxels only - # of voxels
+        3. Image histogram for nonzero voxels only - % of voxels)
+    
+    To change from this default, provide a 'params_list' argument.
+    
+    (More functionality can be added if and when required.) 
+    
+
+    Inputs:
+    -------
+            Mandatory:
+            
+            image_file   - nifti/analyze image
+            outfilename  - name of histogram png file
+            
+            
+            Optional:
+            
+            params_list  - list of dictinoaries specifying how to plot the 
+                           data in each column. Some options only require
+                           the keyword argument, some also require a value
+                           
+                           Options:
+                           
+                           Key:                    Value:    Result:
+                           
+                           'only_nonzero_voxels'    ''        only plot nonzero voxels
+                           'percent of voxels'      ''        label axes as % of voxels
+            
+            
+            showfig      - binary; outputs the figure to screen before saving
+            
+            image_names  - list of names for the corresponding image files, used to label
+                           each row in the histogram grid. Default is 'image 1', 'image2 2', etc.
+
+ 
+    Outputs:
+    --------
+            histogram_png - '.png' file
+    
+    Example:
+    -------
+            
+            make_image_histograms(<list of filenames>,showfig=True,png_filename=<filename>)
+    """
+
+    if params_list == None:
+        params_list = [ dict([('', '')]),
+                        dict([('only_nonzero_voxels','')]),
+                        dict([('only_nonzero_voxels',''),('percent_of_voxels', '')])
+                      ]
+    fig = plt.figure()
+    numrows = len(img_files)
+    numcols = len(params_list)
+    plotnum = 0
+    for i_count,i in enumerate(img_files):
+        if img_names==None:
+            img_name='image ' + str(i_count)
+        else:
+            img_name = img_names[i_count]
+        img_dat = nib.load(i).get_data()
+        s = img_dat.shape
+        d = img_dat.reshape(1,s[0]*s[1]*s[2]).flatten()
+        # Make figure (taken from matplotlib 'hist' example	
+        for p_count,p in enumerate(params_list):
+            plotnum+=1
+            #intstring = int(numrows+numcols+plotnum)
+            ax = fig.add_subplot(str(numrows)+str(numcols)+str(plotnum))#intstring)
+
+            # got this from (partially?) online book: 'Beginning Python visualization: crafting visual transformation scripts'
+            bin_size = 0.2
+            n_voxels = len(d)
+
+            ax_title_end = ' voxels '
+            
+            if p.has_key('x_label'):
+                xlabel=p['x_label']
+            else:
+                xlabel = 'image intensity'
+            
+            if p.has_key('only_nonzero_voxels'):
+                d = d[np.nonzero(d)]
+                ax_title_end = '(nonzero) voxels'
+                
+            if p.has_key('percent_of_voxels'):
+                prob, bins, patches = ax.hist(d,bins=50, normed=True)#np.arange(0,max(d)+bin_size,bin_size), normed=True)#,align='center')
+                """
+                (alternative way of doing the histogram):
+                prob, bins = np.histogram(d,normed=True,bins=200)#,align='center')
+                width = 0.7*(bins[1]-bins[0])
+                center=(bins[:-1]+bins[1:])/2
+                ax.bar(center, prob*np.diff(bins)*100,align='center',width=width)
+                """
+                ax_title_start = '% of '
+            else:
+                prob, bins, patches = ax.hist(d,bins=50)#np.arange(0,max(d)+bin_size,bin_size))#,align='center')
+                ax_title_start = '# of '
+            
+            ax_title=ax_title_start+ax_title_end               
+            ax.tick_params(labelsize='small')
+            ax.grid(True)
+            #ax.set_ylabel(ylabel, fontsize='small')
+            if i_count==0:#i_count==len(img_dat_list)-1:                
+                ax.set_title(ax_title, fontsize='small')
+            if i_count==len(img_files)-1:#0:
+                ax.set_xlabel(xlabel, fontsize='small')
+            if p_count==0:
+                ax.set_ylabel(img_name)
+    if showfig==True:
+        plt.show()
+    if png_filename!=None:
+        print 'writing histogram to   ' + png_filename
+        plt.savefig(png_filename, format="png")
+    #return plt
+
+    
+
+
+class make_image_histogram_fig_InputSpec(BaseInterfaceInputSpec):
+    
+    image_file = traits.File(desc='image file') 
+    # (I want to use this as a list but also need it to take single files so am leaving it as the latter for now )
+	#image_files = traits.List(File,desc='image file list',argstr='%s')
+    outfilename = traits.String(argstr = '%', desc='histogram png filename', mandatory=False)
+
+class make_image_histogram_fig_OutputSpec(TraitedSpec):
+    
+	histogram_png = traits.File(desc="histogram png file",exists=False)
+
+class make_image_histogram_fig(BaseInterface):
+    """   
+    Info
+    ----
+    Wraps function 'make_image_histograms' that calculates histograms 
+    for a series of input images and outputs them as .png files
+    
+    The 'make_image_histograms' function has more flexibility on what 
+    it plotted, but this nipype wrapper (currently) outputs a single 
+    .png file with nx3 subplots, where n is number of input images. 
+
+    The three plots made for each image are:
+    
+        1. Image histogram
+        2. Image histogram for nonzero voxels only - # of voxels
+        3. Image histogram for nonzero voxels only - % of voxels)
+    
+    More functionality can be added if and when required. 
+    
+
+    Inputs:
+    -------
+            image_file   - nifti/analyze image
+            outfilename  - name of histogram png file
+ 
+    Outputs:
+    --------
+            histogram_png - '.png' file
+    
+    Example:
+    -------
+            mihf = jg_custom_interfaces.make_image_histogram_fig()
+	        mihf.inputs.image_file = <list of filenames>
+	        mihf.inputs.outfilename = <filename>
+	        mihf.run()
+    """
+    input_spec = make_image_histogram_fig_InputSpec
+    output_spec = make_image_histogram_fig_OutputSpec
+
+    def _run_interface(self,runtime):
+        self._outfilename = self._gen_outfilename()
+        print 'calculating histogram'
+        make_image_histograms([self.inputs.image_file],png_filename=self._outfilename)
+        """
+        Alternative = get the 'plt' object from the function:
+            plt = make_image_histograms(self.inputs.image_file,png_filename=self._outfilename)
+            print 'writing png file'
+            plt.savefig(self._outfilename)    
+        """
+        return runtime
+    
+    def _gen_outfilename(self):
+        if isdefined(self.inputs.outfilename):
+            fname = self.inputs.outfilename
+        else:
+            fname = os.path.abspath('image_histogram.png')
+        return fname
+    
+    def _list_outputs(self):    
+        outputs = self._outputs().get()
+        outputs["histogram_png"] = self._outfilename
+        return outputs
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 def get_ROI_geom(img,dat=None): #indices,voxel_dimensions, label):
     """
     [ IF THIS TAKES AGES FOR LAST VOLUMES, TRY VECTORIZING CODE...]
@@ -122,8 +373,6 @@ def get_ROI_diameter(img, dat=None):
     diam_dict = dict([['diameter', diam], ['coord1', coord1], ['coord2', coord2]])
     return diam_dict
 
-
-
 def get_img_coords(img):
     """
     [add proper doc]
@@ -141,16 +390,13 @@ def get_img_coords(img):
 
 
 class read_ROI_geom_InputSpec(BaseInterfaceInputSpec):
-    
     ROI_file = traits.File(exists=True, desc='ROI image file',argstr='%s')
     use_labels = traits.Bool(argstr='%s',desc='use labels')
     output_type = traits.Enum('pickled_dict', 'txt_file', 'screen_only', argstr='%s',desc='type of output')
     outfilename = traits.String(argstr = '%', desc='output ROI geometry file', mandatory=False)
-    
-class read_ROI_geom_OutputSpec(TraitedSpec):        
-    
-    ROI_geom_list = traits.File(desc="ROI geometry info file",exists=False)
 
+class read_ROI_geom_OutputSpec(TraitedSpec):
+	ROI_geom_list = traits.File(desc="ROI geometry info file",exists=False)
 
 class read_ROI_geom(BaseInterface):
     """   
@@ -209,11 +455,9 @@ class read_ROI_geom(BaseInterface):
             geoms_list_all_labels = []
            
             if labels=='all_nonzero':
-                new_img_dat = np.zeros(img_dat.shape)
-            if labels=='all_nonzero':
                 inds = np.nonzero(img_dat)	
                 new_img_dat = np.zeros(img_dat.shape)
-		new_img_dat[inds] = np.ones(len(inds[0]))
+                new_img_dat[inds] = np.ones(len(inds[0]))
                 geoms_dict = get_ROI_geom(img, new_img_dat) 
 	        geoms_dict_all_labels['all_nonzero'] = geoms_dict
             else:
@@ -276,7 +520,6 @@ class read_ROI_geom(BaseInterface):
         return outputs
 
 
-
 def read_ROI_list(ROI_xl_file):
     """
     Reads in an excel file with two columns: 
@@ -305,6 +548,7 @@ class make_trk_files_for_connectome_node_list_InputSpec(BaseInterfaceInputSpec):
     ROI_xl_file1 = File(exists=True, desc='excel file with list of node ROI numbers to identify', mandatory=True)
     ROI_xl_file2 = File(exists=True, desc='second excel file with list of node ROI numbers to identify', mandatory=False)
     cff_file = File(exists=True, desc='.cff (connectome file format file)', mandatory=True)
+
 class make_trk_files_for_connectome_node_list_InputSpec(BaseInterfaceInputSpec):
     
     ROI_xl_file1 = File(exists=True, desc='excel file with list of node ROI numbers to identify', mandatory=True)
@@ -429,8 +673,8 @@ class rewrite_trk_file_with_ED_vs_FL_scalars_InputSpec(BaseInterfaceInputSpec):
 	
 	trk_file_orig = File(exists=True, desc='original track file', mandatory=True)
 	trk_file_new = traits.String(argstr = '%s', desc='name of new track file to be made', mandatory=True)
-	scalar_type = traits.String(argstr='%s',desc='Type of scalar...', mandatory=True)
-		
+	scalar_type = traits.String(argstr='%s',desc='Type of scalar...', mandatory=True)		
+
 class rewrite_trk_file_with_ED_vs_FL_scalars_OutputSpec(TraitedSpec):
 	
 	trk_file_new = File(exists=True, desc="trk_file_new")
@@ -512,7 +756,7 @@ class rewrite_trk_file_with_ED_vs_FL_scalars(BaseInterface):
 		fname = self.inputs.trk_file_new
 		outputs["trk_file_new"] = fname
 		return outputs
-	
+
 
 
 
@@ -531,7 +775,7 @@ class apply_QuickBundles_to_connectome_cnxns_InputSpec(BaseInterfaceInputSpec):
 	QB_length_param =traits.Int(0, desc='number of track file in cff object. Default = 0', usedefault=True)
 	QB_downsample_param = traits.Int(0, desc='number of track file in cff object. Default = 0,', usedefault=True)
 	n_fib_thresh = traits.Int(1,desc='minimum number of fibres between node pairs', usedefault=True)
-		
+
 class apply_QuickBundles_to_connectome_cnxns_OutputSpec(TraitedSpec):
 	
 	QB_pkl_file_new =File(exists=True, desc="pkl_file_new", genfile=True) # Is the 'Mandatory' argument really necessary here?
@@ -1230,6 +1474,57 @@ class apply_QuickBundles_to_QB_pkl_files(BaseInterface):
 		return outputs
 
 
+
+"""
+Function for producing image histograms
+
+inputs:
+	images
+	args:
+		- nonzero
+		- range
+		- nbins
+		
+
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.mlab as mlab
+
+import nibabel as nib
+
+img_file = '/work/imaging5/DTI/CBU_DTI/speckles_tester/john_nipype_camino_workflow/64D_2A/speckles_check_workflow/data_analyses/_subject_id_CBU070424/ROI_IFO_LH_fdt_FA/dtifit__FA_maths.nii'
+
+img = nib.load(img_file)
+img_dat = img.get_data()
+s = img_dat.shape
+img_dat_reshaped = img_dat.reshape(1,s[0]*s[1]*s[2])
+img_dat_reshaped_flat = img_dat_reshaped.flatten()
+fig = plt.figure()
+ax = fig.add_subplot(111)
+	
+n,bins,patches = ax.hist(img_dat_reshaped_flat, 50, normed=1, facecolor='green', alpha=0.75)
+	
+# hist uses np.histogram under the hood to create 'n' and 'bins'.
+# np.histogram returns the bin edges, so there will be 50 probability
+# density values in n, 51 bin edges in bins and 50 patches.  To get
+# everything lined up, we'll compute the bin centers
+bincenters = 0.5*(bins[1:]+bins[:-1])
+# add a 'best fit' line for the normal PDF
+y = mlab.normpdf( bincenters, mu, sigma)
+l = ax.plot(bincenters, y, 'r--', linewidth=1)
+
+x.set_xlabel('Smarts')
+ax.set_ylabel('Probability')
+#ax.set_title(r'$\mathrm{Histogram\ of\ IQ:}\ \mu=100,\ \sigma=15$')
+ax.set_xlim(40, 160)
+ax.set_ylim(0, 0.03)
+ax.grid(True)
+
+plt.show()
+if __name__=='main':
+	plt.show()
+
+"""
 
 
 
