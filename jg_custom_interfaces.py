@@ -55,31 +55,113 @@ import matplotlib.mlab as mlab
 #import ipdb; ipdb.set_trace()
 from IPython import embed
 
-def write_img_stats_to_csv(var1_list, var2_list,filepath,outfilename)
+def flatten(l):
     """
-    (in my case var1 is subjects and var2 is ROIs)
-    """        
-    for v1 in var1_list:
-        for v2 in var2_list:
+    stolen from this website:
+    http://lemire.me/blog/archives/2006/05/10/flattening-lists-in-python/
+    see also:
+    http://rightfootin.blogspot.com/2006/09/more-on-python-flatten.html
+    """
+    out = []
+    for item in l:
+        if isinstance(item, (list, tuple)):
+            out.extend(flatten(item))
+        else:
+            out.append(item)
+    return out
+    
+    
+def get_image_stats(filepath, thresh_list=None):
+    """
+    Add docue here
+    
+    THIS WORKS BUT IT ALWAYS GIVES 0 FOR THE PERCENT CALC. FIX
+    """
+    
+    # Load in the image and do some calculations
+    img = nib.load(filepath)
+    img_dat = img.get_data()
+    nz_voxels = img_dat[np.nonzero(img_dat)]
+    img_stats_dict = {}
+    img_stats_dict['num_voxels'] = img.shape[0]*img.shape[1]*img.shape[2]
+    img_stats_dict['num_nz_voxels'] = len(nz_voxels)
+    img_stats_dict['mean_intensity'] = np.average(img_dat)
+    img_stats_dict['median_intensity'] = np.median(img_dat)
+    img_stats_dict['mean_intensity_nz_voxels'] = np.average(nz_voxels)
+    img_stats_dict['median_intensity_nz_voxels'] = np.median(nzvoxels)
+    if thresh_list!=None:
+        for t in thresh_list:
+            voxels_gt_thresh = img_dat[np.nonzero(img_dat>t)]
+            img_stats_dict['voxels_gt_' + str(t) + '_count'] = len(voxels_gt_thresh)
+            img_stats_dict['voxels_gt_' + str(t) + '_pc_of_nz_voxels'] = (len(voxels_gt_thresh)/np.float(len(nz_voxels)))*100 # check this 
+            img_stats_dict['voxels_gt_' + str(t) + '_mean_intensity'] = np.average(voxels_gt_thresh)
+            img_stats_dict['voxels_gt_' + str(t) + '_median_intensity'] = np.median(voxels_gt_thresh)
+    return img_stats_dict
+
+
+def write_img_stats_to_csv(filenames,outfilename,labels=None,thresh_list=None):
+    """
+    SLIGHT PROBLEM = writes the rows out in a funny order...
+    
+    
+    labels is an array of labels for each image
+    thresh is a list of thresholds to be applied to the images
+    
+    
+    I WANT TO BE ABLE TO DO THIS FOR VARIABLE NUMBERS OF VARLIST
+    BUT CAN'T QUITE FIGURE OUT HOW
+        - possibly use:
+            - 'np.tile'
+            - 'np.repeat'
+            - 'itertools.combinations'
+            - other itertools...        
+    """
+    """
+    from xlwt import Workbook
+    wb = Workbook()
+    ws = wb.add_sheet('img_stats')
+    """
+    
+    #order = filepath,labels,image_stats 
+    output = []
+    first_row = ['filename']
+    if labels!=None:
+        first_row.append([l for l in labels[0]]) # add the first entry in each label list    
+        labels.pop(0) # remove that row now
+    #[ws.write(1,l_iter,l[0]) for l_iter, l in enumerate(labels)]
+    # now add the names of the values to get in img_stats
+    img_stats_firstrow = get_image_stats(filenames[0],thresh_list)
+    first_row.append([k for k in img_stats_firstrow.keys()])
+    #[ws.write(1,k,img_stats_firstrow.keys()[k]) for k in range(0, len(img_stats_firstrow.keys()))]
+    # add first_row to the output list
+    output.append(flatten(first_row))
+    # now get the data
+    for f_it,f in enumerate(filenames):
+
+        output_line = [f]       
+        output_line.append([l for l in labels[f_it]])
+        #[ws.write(f_it+1,l_it+l_iter,l[0]) for l_iter, l in enumerate(labels)]
+        
+        img_stats = get_image_stats(f,thresh_list)
+        
+        for i in img_stats.values():
+            output_line.append(i)
             
-            filepath = 
-    num_nz_voxels,num_nz_voxels_gt_1,
-    pc_nz_voxels_gt_1,mean_FA = get_image_info(filepath)
-    output.append([s,r,mean_FA,num_nz_voxels, num_nz_voxels_gt_1,
-            pc_nz_voxels_gt_1,filepath])
-    
-    # add an empty line 
-    output.append([])
-    
+        output.append(flatten(output_line))
+        # add an empty line
+        #output.append([])
+       
     # write to a csv file
-    f = open(csv_file)
+    #embed()
+    f= open(outfilename, 'w')
     import csv
     outputfile = csv.writer(f)
     for line in output:
         outputfile.writerow(line)
     f.close()
-    
-    
+    #wb.save(xl_filename)
+     
+            
   
 
 
@@ -332,7 +414,7 @@ def get_ROI_geom(img,dat=None): #indices,voxel_dimensions, label):
     print '          coord_2: ' + str(geom_dict['coord2'])
     return geom_dict
 
-def get_ROI_diameter(img, dat=None):
+def get_ROI_diameter(img, dat=None,list_extremas=False, make_extrema_box=False):
     """
     [add proper doc]
     'dat' is an optional argument that, when specified, 
@@ -341,37 +423,126 @@ def get_ROI_diameter(img, dat=None):
     can be used when you want to produce an ROI from an
     from an image within python on the fly without writing
     it out to file
+    
+    include 'list_extremas=True' to include the image extremas
+    in the returned dictionary    
     """
     print ' WARNING: HAVENT YET CONFIRMED THAT GET_ROI_DIAMETER WORKS!!!'
-    if dat == None:
+    
+    if dat==None:
         img_dat = img.get_data()
     else:
         img_dat = dat 
-    inds = np.nonzero(img_dat)
+    img_dat_rs = np.reshape(img_dat,[img_dat.shape[0]*img_dat.shape[1]*img_dat.shape[2]])
     
-    img_coords = get_img_coords(img)
-    img_dat_coords = img_coords[inds]
+    img_coords = get_img_coords(img)    
+
+    img_coords_dim1_rs = np.reshape(img_coords[:,:,:,0],[1,img_coords.shape[0]*img_coords.shape[1]*img_coords.shape[2]])
+    img_coords_dim2_rs = np.reshape(img_coords[:,:,:,1],[1,img_coords.shape[0]*img_coords.shape[1]*img_coords.shape[2]])
+    img_coords_dim3_rs = np.reshape(img_coords[:,:,:,2],[1,img_coords.shape[0]*img_coords.shape[1]*img_coords.shape[2]])    
+    img_coords_dim123_rs = np.squeeze(np.array([img_coords_dim1_rs, img_coords_dim2_rs, img_coords_dim3_rs]))
+    
+    img_coords_rs = np.reshape(img_coords, [len(img_dat_rs),3])
+    #img_coords_rs = np.reshape(img_coords,[1,img_coords.shape[0]*img_coords.shape[1]*img_coords.shape[2]])
+#    img_dat_rs = np.reshape(img_dat,[1,img_dat.shape[0]*img_dat.shape[1]*img_dat.shape[2]])
+
+    img_dat_rs_nz_inds = np.nonzero(img_dat_rs)
+    #img_coords_dim123_rs_nz = img_coords_dim123_rs[:,img_dat_rs_nz_inds]
+    img_coords_rs_nz = img_coords_rs[img_dat_rs_nz_inds]
+
+    """
+    nz_inds = np.nonzero(img_dat_rs)                                     
+    nz_img_coords = img_coords_rs[nz_inds] # coordinates of non-zero voxels; also is an n voxels x3 array
+    """
     
     extremas = []
+    extremas_nz = []
+    all_maxvalinds = []
+    all_minvalinds = []
+    all_maxvalinds_nz = []
+    all_minvalinds_nz = []
+    
+    extremas_list = [['max', 'min', 'diff']]
+     # to get back the actual voxel values:
+    # iterate through each image dimension
     for n in [0,1,2]:
-        maxval= max(img_dat_coords[:,n])
-        maxvalinds = np.nonzero(img_dat_coords[:,n]==maxval)
-        [extremas.append(mv) for mv in img_dat_coords[maxvalinds,:][0]]
+        # find the outermost nonzero coordinate
+        #maxval= max(img_coords_dim123_rs[n,:])
+        maxval= max(img_coords_rs_nz[:,n])
+        
+        # find the indices of elements in the in nz_img_coords
+        # that have that value (for the current dimension)
+        #maxvalinds = np.nonzero(img_coords_dim123_rs[n,:]==maxval)
+        maxvalinds = np.nonzero(img_coords_rs[:,n]==maxval)[0]
+        maxvalinds_nz = np.nonzero(img_coords_rs_nz[:,n]==maxval)[0]
 
-        minval= min(img_dat_coords[:,n])
-        minvalinds = np.nonzero(img_dat_coords[:,n]==minval)
-        [extremas.append(mv) for mv in img_dat_coords[minvalinds,:][0]]
+        # add to the extremas and nz_img_coord indices (maxvalinds) lists
+        #[extremas.append(mv) for mv in np.squeeze(img_coords_dim123_rs[:,maxvalinds]).T]
+        [extremas.append(mv) for mv in img_coords_rs[maxvalinds]]                                                     
+        [extremas_nz.append(mv) for mv in img_coords_rs_nz[maxvalinds_nz]]                                                     
+        
+        all_maxvalinds+=list(maxvalinds)
+        all_maxvalinds_nz+=list(maxvalinds_nz)
+        
+        # do the same for outermost nonzero voxel in the -ve direction (minima)
+        #minval= min(img_coords_dim123_rs[n,:])
+        minval= min(img_coords_rs_nz[:,n])
+
+        #minvalinds = np.nonzero(img_coords_dim123_rs[n,:]==minval)
+        minvalinds = np.nonzero(img_coords_rs[:,n]==minval)[0]
+        minvalinds_nz = np.nonzero(img_coords_rs_nz[:,n]==minval)[0]
+
+        #[extremas.append(mv) for mv in np.squeeze(img_coords_dim123_rs[:,minvalinds]).T]
+        [extremas.append(mv) for mv in img_coords_rs[minvalinds]]                                                     
+        [extremas_nz.append(mv) for mv in img_coords_rs_nz[minvalinds_nz]]                                                     
+
+        all_minvalinds+=list(minvalinds)
+        all_minvalinds_nz+=list(minvalinds_nz)
+        
+        extremas_list.append([maxval, minval, maxval+abs(minval)]) 
+        # (the difference only works if the minima have '-' coordinates
+        
+        if n==0:
+            n0_maxvalinds = maxvalinds
+            n0_minvalinds = minvalinds
+        if n==1:
+            n2_maxvalinds = maxvalinds
+            n2_minvalinds = minvalinds
+        if n==2:
+            n2_maxvalinds = maxvalinds
+            n2_minvalinds = minvalinds
+
     
     diam = 0    
-    for c1 in extremas:
-        for c2 in extremas:
+    for c1 in extremas_nz:
+        for c2 in extremas_nz:
             eudist = sum(np.sqrt((c1-c2)**2))
             if eudist>diam:
                 diam=eudist
                 coord1=c1
                 coord2=c2
     diam_dict = dict([['diameter', diam], ['coord1', coord1], ['coord2', coord2]])
-    return diam_dict
+    if list_extremas==True:
+        diam_dict['extremas'] = extremas
+        diam_dict['extremas_nz'] = extremas_nz
+        diam_dict['extremas_list'] = extremas_list
+    if make_extrema_box == True:
+        new_img_dat = np.zeros(img_dat_rs.shape)
+        new_img_dat[all_minvalinds] = 1 #np.ones(len(all_minvalinds))
+        new_img_dat[all_maxvalinds] = 2 #np.ones(len(all_minvalinds))*2
+        # reshape new_img_dat back to the original img array size
+        new_img_dat_rs = np.reshape(new_img_dat,img_dat.shape)
+        """
+          check for this:
+          sh =img_dat.shape 
+          diff = np.reshape(new_img_dat,sh)-np.reshape(img_dat_rs,sh)
+          np.nonzero(diff)  --> empty array 
+        """
+        new_img = nib.Nifti1Image(new_img_dat_rs,img.get_affine())
+      
+        return diam_dict, new_img
+    else:
+        return diam_dict
 
 def get_img_coords(img):
     """
@@ -490,7 +661,6 @@ class read_ROI_geom(BaseInterface):
             print '\n saving to ' + outfilename + '\n'
             if self.inputs.output_type == 'pickled_dict':
                 save_pickle(outfilename, geoms_all)
-            elif self.inputs.output_type == 'txt_file':
                 f = open(outfilename, 'w')
                 f.writelines(["%s\n" % str(gl) for gl in geoms_list])
                 #f.writelines(list( '%s \n ' % gl for gl in geoms_list))
@@ -667,20 +837,83 @@ class make_trk_files_for_connectome_node_list(BaseInterface):
         return outputs
 
 
+def rewrite_trk_file_with_ED_vs_FL_scalars(trk_file_orig,scalar_type,trk_file_new=None, lengths_list_file_new=None):
+    """
+    (see nipype version for documentation and example)
+    
+    ( NOTE: haven't tested since modifying to separate nipype and raw function )
+    
+    trk_file_orig can be either a filename (string) or a [fib,hdr] pair (list), 
+    where the elements are those given by nibabel when reading in trackvis files
+    ...the point of the latter is so that .trk files can be read in separately and 
+    modified if necessary (e.g. masks applied) on-the-go in python without having
+    to write out to more files  
+
+    """
+    if type(trk_file_orig) == str and os.path.isfile(trk_file_orig):        
+        print 'loading fibres...'
+        fib_orig, hdr_orig = nib.trackvis.read(trk_file_orig, False)
+        print str(len(fib_orig)) + ' fibres loaded'
+    elif type(trk_file_orig) == list:
+        print 'fibres passsed directly...'
+        fib_orig =trk_file_orig[0]
+        hdr_orig = trk_file_orig[1]
+    hdr_new = hdr_orig.copy()
+    fib_new = []
+    lengths_list = [['Fibre Length (FL)', 'Euclidean Distance (ED)', 'FL minus ED', 'ED as a percentage of FL']]
+    for f in fib_orig:
+        # Calculate fibre lengths    
+        FL = fib_length(f[0]) 
+        # Calculate Euclidean distance between fibre start and endpoints
+        ED = np.sqrt(np.square(f[0][0][0]-f[0][-1][0])+np.square(f[0][0][1]-f[0][-1][1])+np.square(f[0][0][2]-f[0][-1][2]))
+        # Calculate fibre length minus Euclidean distance:
+        FL_sub_ED = np.subtract(FL, ED)
+        # Calculate Euclidean distance as a percentage of fibre length
+        ED_pco_FL = np.divide(100,FL)*ED
+        
+        lengths_list.append([FL, ED, FL_sub_ED, ED_pco_FL])
+        if scalar_type == 'FL':
+            scalar_array = np.ones((len(f[0]),1),dtype='float')*FL
+            property_array = np.array([FL], dtype='float32')
+        if scalar_type == 'ED':
+            scalar_array = np.ones((len(f[0]),1),dtype='float')*ED
+            property_array = np.array([ED], dtype='float32')
+        if scalar_type == 'FL_sub_ED':
+            scalar_array = np.ones((len(f[0]),1),dtype='float')*FL_sub_ED
+            property_array = np.array([FL_sub_ED], dtype='float32')
+        if scalar_type == 'ED_pco_FL':
+            scalar_array = np.ones((len(f[0]),1),dtype='float')*ED_pco_FL
+            property_array = np.array([ED_pco_FL], dtype='float32')
+        new_tuple=tuple([f[0], scalar_array,property_array])                
+        fib_new.append(new_tuple)
+    n_fib_out = len(fib_new)
+    hdr_new['n_count'] = n_fib_out    
+    hdr_new['n_scalars'] = np.array(1, dtype='int16')
+    hdr_new['scalar_name'] = np.array([scalar_type, '', '', '', '', '', '', '', '', ''],dtype='|S20')
+    hdr_new['n_properties'] = np.array(1, dtype='int16')
+    hdr_new['property_name'] = np.array([scalar_type, '', '', '', '', '', '', '', '', ''],dtype='|S20')
+    if trk_file_new!=None:
+        nib.trackvis.write(trk_file_new, fib_new, hdr_new)        
+    if lengths_list_file_new!=None:
+        save_pickle(lengths_list_file_new, lengths_list)
+    return fib_new, hdr_new, lengths_list
 
 
-class rewrite_trk_file_with_ED_vs_FL_scalars_InputSpec(BaseInterfaceInputSpec):
+class rewrite_trk_file_with_ED_vs_FL_scalars_nipype_InputSpec(BaseInterfaceInputSpec):
+    
+    trk_file_orig = File(exists=True, desc='original track file', mandatory=True)
+    trk_file_new = traits.String(argstr = '%s', desc='name of new track file to be made', mandatory=True)
+    lengths_list_file_new = traits.String(argstr = '%s', desc='name of new lengths list .pkl file to be made', mandatory=True)
+    scalar_type = traits.String(argstr='%s',desc='Type of scalar...', mandatory=True)		
+
+class rewrite_trk_file_with_ED_vs_FL_scalars_nipype_OutputSpec(TraitedSpec):
+    
+    trk_file_new = File(exists=True, desc="trk_file_new")
+    lengths_list_file_new = File(exists=False, desc="length_stats")
+
 	
-	trk_file_orig = File(exists=True, desc='original track file', mandatory=True)
-	trk_file_new = traits.String(argstr = '%s', desc='name of new track file to be made', mandatory=True)
-	scalar_type = traits.String(argstr='%s',desc='Type of scalar...', mandatory=True)		
-
-class rewrite_trk_file_with_ED_vs_FL_scalars_OutputSpec(TraitedSpec):
-	
-	trk_file_new = File(exists=True, desc="trk_file_new")
-		
-class rewrite_trk_file_with_ED_vs_FL_scalars(BaseInterface):
-	"""
+class rewrite_trk_file_with_ED_vs_FL_scalars_nipype(BaseInterface):
+    """
 	Reads in a trackvis file and writes out a copy of the file
 	with scalars and properties added to each fibre (streamline), according
 	to one of four options, related to the length of the streamline:
@@ -697,9 +930,10 @@ class rewrite_trk_file_with_ED_vs_FL_scalars(BaseInterface):
 	along the fibre. 
 	
 	Usage: 
-		r = jg_nipype_interfaces.rewrite_trk_file_with_ED_vs_FL_scalars()
+		r = jg_nipype_interfaces.rewrite_trk_file_with_ED_vs_FL_scalars_nipype()
 		r.inputs.trk_file_orig = <trk_file_orig>
 		r.inputs.trk_file_new  = <trk_file_new>
+		r.inputs.lengths_list_file_new  = <lengths_list_file_new>
 		r.inputs.scalar_type   = <scalar_type>
 		r.run()
 	 
@@ -709,56 +943,24 @@ class rewrite_trk_file_with_ED_vs_FL_scalars(BaseInterface):
 		trk_file_new  - name of new .trk file to be written 
 		scalar_type   - type of scalar to write ('FL', 'ED', 'FL_sub_ED', 'ED_pco_FL'; see above)
 	"""
-	input_spec = rewrite_trk_file_with_ED_vs_FL_scalars_InputSpec
-	output_spec = rewrite_trk_file_with_ED_vs_FL_scalars_OutputSpec	
-	def _run_interface(self,runtime):
-		scalar_type = self.inputs.scalar_type
-		trk_file_orig = self.inputs.trk_file_orig
-		trk_file_new = self.inputs.trk_file_new
-		print 'loading fibres...'
-		fib_orig, hdr_orig = nib.trackvis.read(trk_file_orig, False)
-		print str(len(fib_orig)) + ' fibres loaded'
-		hdr_new = hdr_orig.copy()
-		fib_new = []
-		for f in fib_orig:
-			# Calculate fibre lengths	
-			FL = fib_length(f[0]) 
-			# Calculate Euclidean distance between fibre start and endpoints
-			ED = np.sqrt(np.square(f[0][0][0]-f[0][-1][0])+np.square(f[0][0][1]-f[0][-1][1])+np.square(f[0][0][2]-f[0][-1][2]))
-			# Calculate fibre length minus Euclidean distance:
-			FL_sub_ED = np.subtract(FL, ED)
-			# Calculate Euclidean distance as a percentage of fibre length
-			ED_pco_FL = np.divide(100,FL)*ED
-			if scalar_type == 'FL':
-				scalar_array = np.ones((len(f[0]),1),dtype='float')*FL
-				property_array = np.array([FL], dtype='float32')
-			if scalar_type == 'ED':
-				scalar_array = np.ones((len(f[0]),1),dtype='float')*ED
-				property_array = np.array([ED], dtype='float32')
-			if scalar_type == 'FL_sub_ED':
-				scalar_array = np.ones((len(f[0]),1),dtype='float')*FL_sub_ED
-				property_array = np.array([FL_sub_ED], dtype='float32')
-			if scalar_type == 'ED_pco_FL':
-				scalar_array = np.ones((len(f[0]),1),dtype='float')*ED_pco_FL
-				property_array = np.array([ED_pco_FL], dtype='float32')
-			new_tuple=tuple([f[0], scalar_array,property_array])				
-			fib_new.append(new_tuple)
-		n_fib_out = len(fib_new)
-		hdr_new['n_count'] = n_fib_out	
-		hdr_new['n_scalars'] = np.array(1, dtype='int16')
-		hdr_new['scalar_name'] = np.array([scalar_type, '', '', '', '', '', '', '', '', ''],dtype='|S20')
-		hdr_new['n_properties'] = np.array(1, dtype='int16')
-		hdr_new['property_name'] = np.array([scalar_type, '', '', '', '', '', '', '', '', ''],dtype='|S20')
-		nib.trackvis.write(trk_file_new, fib_new, hdr_new)		
-		return runtime	
-	def _list_outputs(self):
-		outputs = self._outputs().get()
-		fname = self.inputs.trk_file_new
-		outputs["trk_file_new"] = fname
-		return outputs
-
-
-
+    input_spec = rewrite_trk_file_with_ED_vs_FL_scalars_nipype_InputSpec
+    output_spec = rewrite_trk_file_with_ED_vs_FL_scalars_nipype_OutputSpec	
+    def _run_interface(self,runtime):
+        scalar_type = self.inputs.scalar_type
+        trk_file_orig = self.inputs.trk_file_orig
+        trk_file_new = self.inputs.trk_file_new
+        lengths_list_file_new = self.inputs.lengths_list_file_new
+        fib_new, hdr_new, lengths_list = rewrite_trk_file_with_ED_vs_FL_scalars(
+                                         trk_file_orig, scalar_type, trk_file_new=trk_file_new,
+                                         lengths_list_file_new=lengths_list_file_new)
+        return runtime
+    def _list_outputs(self):
+        outputs = self._outputs().get()
+        tfn = self.inputs.trk_file_new
+        llfn = self.inputs.lengths_list_file_new
+        outputs["trk_file_new"] = tfn
+        outputs["lengths_list_file_new"] = llfn
+        return outputs
 
 class apply_QuickBundles_to_connectome_cnxns_InputSpec(BaseInterfaceInputSpec):
 
@@ -966,7 +1168,7 @@ class apply_QuickBundles_to_trk_files_OutputSpec(TraitedSpec):
 	QB_pkl_file_new =File(exists=False, desc="pkl_file_new", Mandatory=~False)
 
 class apply_QuickBundles_to_trk_files(BaseInterface):
-	"""
+    """
 	Usage:
 	
 	aQB = jg_nipype_interfaces.apply_QuickBundles_to_connectome_cnxns()
@@ -978,75 +1180,71 @@ class apply_QuickBundles_to_trk_files(BaseInterface):
 	
 	Documentation here
 	"""
-	input_spec = apply_QuickBundles_to_trk_files_InputSpec
-	output_spec = apply_QuickBundles_to_trk_files_OutputSpec
+    input_spec = apply_QuickBundles_to_trk_files_InputSpec
+    output_spec = apply_QuickBundles_to_trk_files_OutputSpec
+    def _run_interface(self,runtime):
+        print 'running interface'
+        import time
+        from nibabel import trackvis as tv
+        from dipy.tracking import metrics as tm
+        from dipy.tracking import distances as td
+        from dipy.io import pickles as pkl
+        from dipy.viz import fvtk
+        from dipy.segment.quickbundles import QuickBundles
+        # now collect together all tracks for this cnxn			
+        T = []
+	for t in self.inputs.trk_files:
+		fibs, hdr = nib.trackvis.read(t)
+		for f in fibs:
+			T.append(f[0])
+
+	hdr_orig = hdr # when a list of trks is used, just takes the header of the last in the list	
+	#Downsample tracks to just 5 points:
+	tracks=[tm.downsample(t,5) for t in T]	
+	#Perform Local Skeleton Clustering (LSC) with a 5mm threshold:
+	now=time.clock()
+	C=td.local_skeleton_clustering(tracks,d_thr=5)
+	print('Done in %.2f s'  % (time.clock()-now,))
 	
-	def _run_interface(self,runtime):
-		print 'running interface'	
-		import time
-		from nibabel import trackvis as tv		
-		from dipy.tracking import metrics as tm
-		from dipy.tracking import distances as td
-		from dipy.io import pickles as pkl
-		from dipy.viz import fvtk
-		from dipy.segment.quickbundles import QuickBundles
-				
-		# now collect together all tracks for this cnxn			
-		T = []
-		for t in self.inputs.trk_files:
-			fibs, hdr = nib.trackvis.read(t)
-			for f in fibs:
-				T.append(f[0])
-			
-		#Downsample tracks to just 5 points:
-		tracks=[tm.downsample(t,5) for t in T]
-			
-		#Perform Local Skeleton Clustering (LSC) with a 5mm threshold:
-		now=time.clock()
-		C=td.local_skeleton_clustering(tracks,d_thr=5)
-		print('Done in %.2f s'  % (time.clock()-now,))
-			
-		Tpoly=[td.approx_polygon_track(t) for t in T]
-		lens=[len(C[c]['indices']) for c in C]
-		print('max %d min %d' %(max(lens), min(lens)))
-		print('singletons %d ' % lens.count(1))
-		print('doubletons %d' % lens.count(2))
-		print('tripletons %d' % lens.count(3))
-				
-		skeleton=[]
-			
-		for c in C:			
-			bundle=[Tpoly[i] for i in C[c]['indices']]
-			si,s=td.most_similar_track_mam(bundle,'avg')    
-			skeleton.append(bundle[si])
-			
-		for (i,c) in enumerate(C):    
-			C[c]['most']=skeleton[i]
-			
-		for c in C:    
-			print('Keys in bundle %d' % c)
-			print(C[c].keys())
-			print('Shape of skeletal track (%d, %d) ' % C[c]['most'].shape)
-					
-		qb = QuickBundles(Tpoly,self.inputs.QB_length_param,self.inputs.QB_downsample_param)
-		V = qb.virtuals()
-		Et, Ei = qb.exemplars() # Et = E tracks, Ei = E indices
-				
-		QB_names = ['QB_names_dict', 'C','T','skeleton','qb','V','Et','Ei', 'Tpoly', 'trk_files']
-		# want to also add the elements to the QB_data list in this loop, 
-		# but not sure how to do that just yet	
-		QB_names_dict = {}
-		for q in range(0, len(QB_names)):
-			QB_names_dict[QB_names[q]] = q			
-
-		QB_data =  [ QB_names_dict,  C,  T,  skeleton,  qb,  V,  Et,  Ei,   Tpoly, self.inputs.trk_files]
+	Tpoly=[td.approx_polygon_track(t) for t in T]
+	lens=[len(C[c]['indices']) for c in C]
+	print('max %d min %d' %(max(lens), min(lens)))
+	print('singletons %d ' % lens.count(1))
+	print('doubletons %d' % lens.count(2))
+	print('tripletons %d' % lens.count(3))
+	
+	skeleton=[]
+	
+	for c in C:			
+		bundle=[Tpoly[i] for i in C[c]['indices']]
+		si,s=td.most_similar_track_mam(bundle,'avg')    
+		skeleton.append(bundle[si])
 		
-		pkl.save_pickle(self.inputs.QB_pkl_file_new,QB_data) # ...other outputs
-		#print 'Saving Dictionary File to {path} in Pickle format'.format(path=op.abspath(self.dict_file))
-		return runtime
-
-
-	def _list_outputs(self):	
+	for (i,c) in enumerate(C):    
+		C[c]['most']=skeleton[i]
+			
+	for c in C:    
+		print('Keys in bundle %d' % c)
+		print(C[c].keys())
+		print('Shape of skeletal track (%d, %d) ' % C[c]['most'].shape)
+	
+	qb = QuickBundles(Tpoly,self.inputs.QB_length_param,self.inputs.QB_downsample_param)
+	V = qb.virtuals()
+	Et, Ei = qb.exemplars() # Et = E tracks, Ei = E indices
+	
+        cnxn_list = [['had_to_add_a_name_here_to_get_the_interface_to_work1', 'ibid']]		       
+        #QB_names = ['QB_names_dict', 'Cs','Ts','skeletons','qbs','Vs','Ets','Eis', 'Tpolys', 'cnxn_list', 'hdr_orig']       
+        QB_names = ['QB_names_dict', 'C','T','skeleton','qb','V','Et','Ei', 'Tpoly', 'cnxn_list', 'hdr_orig', 'trk_files']
+        # want to also add the elements to the QB_data list in this loop, 
+        # but not sure how to do that just yet	
+        QB_names_dict = {}
+        for q in range(0, len(QB_names)):
+            QB_names_dict[QB_names[q]] = q
+        QB_data =  [ QB_names_dict,  C,  T,  skeleton,  qb,  V,  Et,  Ei,   Tpoly, cnxn_list, hdr_orig, self.inputs.trk_files]
+        pkl.save_pickle(self.inputs.QB_pkl_file_new,QB_data) # ...other outputs
+        #print 'Saving Dictionary File to {path} in Pickle format'.format(path=op.abspath(self.dict_file))
+        return runtime
+    def _list_outputs(self):	
 		outputs = self._outputs().get()
 		fname = self.inputs.QB_pkl_file_new
 		#outputs["trk_file_new"] = fname
@@ -1207,9 +1405,9 @@ class write_QuickBundles_to_trk(BaseInterface):
 		
 		QB_all = pkl.load_pickle(self.inputs.QB_pkl_file)
 		
-		Ts = QB_all[QB_all[0]['Ts']]
-		Ets = QB_all[QB_all[0]['Ets']]
-		Vs = QB_all[QB_all[0]['Vs']]
+		Ts = QB_all[QB_all[0]['T']] # temporary: changed from Ts']]
+		Ets = QB_all[QB_all[0]['Et']] # temporary: changed from Et']]
+		Vs = QB_all[QB_all[0]['V']] # temporary: changed from V']]
 		ROI_labels = QB_all[QB_all[0]['cnxn_list']]
 		hdr_orig = QB_all[QB_all[0]['hdr_orig']]		
 		hdr_new = hdr_orig.copy()    	
@@ -1297,6 +1495,86 @@ class write_QuickBundles_to_trk(BaseInterface):
 		#for f in self.outfile_list:
 		#	outputs['outfile_list'].append(f)
 		return outputs
+
+
+
+
+
+def write_QuickBundles_to_trk_alternative(QB_pkl_file, trk_file_new, QB_output_type):
+	"""
+	Alternative to the original nipype interface 
+	for this (above), because it wasn't working on 
+	outputs from the apply_QuickBundles_to_trk' interface
+	 - need to sort out the differences between these
+	 at some point; at the moment though just need a working
+	 function for this
+	 
+	 Isn't doing the Et/V/T combination properly;
+	 but will output them separately...
+	 
+	 """
+	from dipy.io import pickles as pkl
+	from nibabel import trackvis as tv
+	QB_all = pkl.load_pickle(QB_pkl_file)
+	Ts = QB_all[QB_all[0]['T']] # temporary: changed from Ts']]
+	Ets = QB_all[QB_all[0]['Et']] # temporary: changed from Et']]
+	Vs = QB_all[QB_all[0]['V']] # temporary: changed from V']]
+	#ROI_labels = QB_all[QB_all[0]['cnxn_list']]
+	hdr_orig = QB_all[QB_all[0]['hdr_orig']]		
+	hdr_new = hdr_orig.copy()
+	fib_new = []
+	Ts_tuples = []
+	Ets_tuples = []
+	Vs_tuples = []
+	if QB_output_type == 'Ts_Ets_Vs':
+		hdr_new['n_scalars'] = np.array(1, dtype='int16')
+		hdr_new['scalar_name'] = np.array(['track / virtual / exemplar','','', '', '', '', '', '', '', ''],dtype='|S20')
+		hdr_new['n_properties'] = np.array(1, dtype='int16')
+		hdr_new['property_name'] = np.array(['track / virtual / exemplar','','', '', '', '', '', '', '', ''],dtype='|S20')							
+			# Numerical values serving as labels for the 3 different data types
+		Ts_val = 1
+		Ets_val = 2
+		Vs_val = 3
+		Ts_property_array = np.array([Ts_val], dtype='float32')
+		Ets_property_array = np.array([Ets_val], dtype='float32')
+		Vs_property_array = np.array([Vs_val], dtype='float32')
+		for t in Ts:	
+			Ts_scalar_array = np.ones((len(t),1),dtype='float')*Ts_val
+			new_tuple=tuple([t,Ts_scalar_array,Ts_property_array])
+			Ts_tuples.append(new_tuple)
+	
+		Ets_scalar_array = np.ones((len(Ets[0]),1),dtype='float')*Ets_val
+		new_tuple=tuple([Ets[0], Ets_scalar_array,Ets_property_array])
+		Ets_tuples.append(new_tuple) 
+		
+		Vs_scalar_array = np.ones((len(Vs[0]),1),dtype='float')*Vs_val
+		new_tuple=tuple([Vs[0], Vs_scalar_array,Vs_property_array])
+		Vs_tuples.append(new_tuple)
+		fib_new = Ts_tuples + Ets_tuples + Vs_tuples
+	else: # Not using the property or scalar arrays for the simple Ts, Ets, and Vs
+		hdr_new['n_scalars'] = np.array(0, dtype='int16')
+		hdr_new['scalar_name'] = np.array(['','','', '', '', '', '', '', '', ''],dtype='|S20')
+		hdr_new['n_properties'] = np.array(0, dtype='int16')
+		hdr_new['property_name'] = np.array(['','','', '', '', '', '', '', '', ''],dtype='|S20')
+		for t in Ts:	
+			new_tuple=tuple([t, None, None])
+			Ts_tuples.append(new_tuple)
+		
+		new_tuple=tuple([Ets[0], None, None])
+		Ets_tuples.append(new_tuple)
+		
+		new_tuple=tuple([Vs[0], None, None])
+		Vs_tuples.append(new_tuple)
+		
+		if QB_output_type == 'Ts': fib_new = Ts_tuples
+		elif QB_output_type == 'Ets': fib_new = Ets_tuples
+		elif QB_output_type == 'Vs': fib_new = Vs_tuples
+	
+	n_fib_out = len(fib_new)
+	hdr_new['n_count'] = n_fib_out		
+	tv.write(trk_file_new, fib_new, hdr_new)
+	
+
 
 
 
@@ -1525,6 +1803,83 @@ if __name__=='main':
 	plt.show()
 
 """
+
+
+
+def get_average(in_file1, in_file2):
+    """
+    Add doc
+    """
+    import nibabel as nib
+    import numpy as np
+    from nipype.interfaces.base import traits
+    import os
+    img1 = nib.load(in_file1)
+    img2 = nib.load(in_file2)
+    average_data = np.divide(img1.get_data()+img2.get_data(),2)
+    average_img = nib.Nifti1Image(average_data,img1.get_affine())
+    outfilename = os.path.abspath('average_image.nii')
+    nib.save(average_img, outfilename)
+    #return traits.File(outfilename)
+    return outfilename
+
+
+"""
+Ziegler's helper functions (see e.g. camino_dti_tutorial.py) - 
+putting them here to un-clutter some analysis scripts...
+
+Define some helper functions that identify voxel and data dimensions of input images
+"""
+
+def get_vox_dims(volume):
+    """
+    Usage:
+            [dim1, dim2, dim3] = get_vox_dims(volume)
+    """
+    import nibabel as nb
+    if isinstance(volume, list):
+        volume = volume[0]
+    nii = nb.load(volume)
+    hdr = nii.get_header()
+    voxdims = hdr.get_zooms()
+    return [float(voxdims[0]), float(voxdims[1]), float(voxdims[2])]
+
+def get_data_dims(volume):
+    """
+    Usage:
+            [dim1, dim2, dim3] = get_data_dims(volume)
+    """
+    import nibabel as nb
+    if isinstance(volume, list):
+        volume = volume[0]
+    nii = nb.load(volume)
+    hdr = nii.get_header()
+    datadims = hdr.get_data_shape()
+    return [int(datadims[0]), int(datadims[1]), int(datadims[2])]
+
+def get_affine(volume):
+    """
+    Usage:
+            [dim1, dim2, dim3] = get_data_dims(volume)
+    """
+
+    import nibabel as nb
+    nii = nb.load(volume)
+    return nii.get_affine()
+
+def select_aparc(list_of_files):
+    for in_file in list_of_files:
+        if 'aparc+aseg.mgz' in in_file:
+            idx = list_of_files.index(in_file)
+    return list_of_files[idx]
+
+def select_aparc_annot(list_of_files):
+    for in_file in list_of_files:
+        if '.aparc.annot' in in_file:
+            idx = list_of_files.index(in_file)
+    return list_of_files[idx]
+
+
 
 
 
