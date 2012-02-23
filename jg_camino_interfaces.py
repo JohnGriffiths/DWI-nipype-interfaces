@@ -578,3 +578,112 @@ class PicoPDFs2Fib(StdOutCommandLine):
 
 
 
+
+# PROCSTREAMLINES: MODIFYING SO THAT IT INCLUDES ENDPOINTFILE PROPERLY 
+#    - changed position arguments to -1 for all but the in file
+
+
+class ProcStreamlinesInputSpec(StdOutCommandLineInputSpec):
+    inputmodel = traits.Enum('raw', 'voxels', argstr='-inputmodel %s', desc='input model type (raw or voxels)', usedefault=True)
+
+    in_file = File(exists=True, argstr='-inputfile %s',
+                    mandatory=True, position=1,
+                    desc='data file')
+
+    maxtractpoints= traits.Int(argstr='-maxtractpoints %d', units='NA',
+                desc="maximum number of tract points")
+    mintractpoints= traits.Int(argstr='-mintractpoints %d', units='NA',
+                desc="minimum number of tract points")
+    maxtractlength= traits.Int(argstr='-maxtractlength %d', units='mm',
+                desc="maximum length of tracts")
+    mintractlength= traits.Int(argstr='-mintractlength %d', units='mm',
+                desc="minimum length of tracts")
+    datadims = traits.List(traits.Int, desc = 'data dimensions in voxels',
+                 argstr='-datadims %s', minlen=3, maxlen=3,
+                 units='voxels')
+    voxeldims = traits.List(traits.Int, desc = 'voxel dimensions in mm',
+                 argstr='-voxeldims %s', minlen=3, maxlen=3,
+                 units='mm')
+    seedpointmm = traits.List(traits.Int, desc = 'The coordinates of a single seed point for tractography in mm',
+                 argstr='-seedpointmm %s', minlen=3, maxlen=3,
+                 units='mm')
+    seedpointvox = traits.List(traits.Int, desc = 'The coordinates of a single seed point for tractography in voxels',
+                             argstr='-seedpointvox %s', minlen=3, maxlen=3,
+                             units='voxels')
+    seedfile = File(exists=False, argstr='-seedfile %s',
+                    mandatory=False, position=-1, #position=1 * JG MOD
+                    desc='Image Containing Seed Points')
+    regionindex = traits.Int(argstr='-regionindex %d', units='mm',
+                desc="index of specific region to process")
+    iterations = traits.Float(argstr='-iterations %d', units='NA',
+                desc="Number of streamlines generated for each seed. Not required when outputting streamlines, but needed to create PICo images. The default is 1 if the output is streamlines, and 5000 if the output is connection probability images.")
+    targetfile = File(exists=False, argstr='-targetfile %s',
+                    mandatory=False,position=-1,# position=1, * JG MOD
+                    desc='Image containing target volumes.')
+    allowmultitargets = traits.Bool(argstr='-allowmultitargets', desc="Allows streamlines to connect to multiple target volumes.")
+    directional = traits.List(traits.Int, desc = 'Splits the streamlines at the seed point and computes separate connection probabilities for each segment. Streamline segments are grouped according to their dot product with the vector (X, Y, Z). The ideal vector will be tangential to the streamline trajectory at the seed, such that the streamline projects from the seed along (X, Y, Z) and -(X, Y, Z). However, it is only necessary for the streamline trajectory to not be orthogonal to (X, Y, Z).',
+                 argstr='-directional %s', minlen=3, maxlen=3,
+                 units='NA')
+    waypointfile = File(exists=False, argstr='-waypointfile %s',
+                    mandatory=False, position=-1, # position=1, * JG MOD
+                    desc='Image containing waypoints. Waypoints are defined as regions of the image with the same intensity, where 0 is background and any value > 0 is a waypoint.')
+    truncateloops = traits.Bool(argstr='-truncateloops', desc="This option allows streamlines to enter a waypoint exactly once. After the streamline leaves the waypoint, it is truncated upon a second entry to the waypoint.")
+    discardloops = traits.Bool(argstr='-discardloops', desc="This option allows streamlines to enter a waypoint exactly once. After the streamline leaves the waypoint, the entire streamline is discarded upon a second entry to the waypoint.")
+    exclusionfile = File(exists=False, argstr='-exclusionfile %s',
+                    mandatory=False, position=-1, # position=1 * JG MOD
+                    desc='Image containing exclusion ROIs. This should be an Analyze 7.5 header / image file.hdr and file.img.')
+    truncateinexclusion = traits.Bool(argstr='-truncateinexclusion', desc="Retain segments of a streamline before entry to an exclusion ROI.")
+
+    endpointfile = File(exists=False, argstr='-endpointfile %s',
+                    mandatory=False, position=-1, #position=1, * JG MOD
+                    desc='Image containing endpoint ROIs. This should be an Analyze 7.5 header / image file.hdr and file.img.')
+
+    resamplestepsize = traits.Float(argstr='-resamplestepsize %d', units='NA',
+                desc="Each point on a streamline is tested for entry into target, exclusion or waypoint volumes. If the length between points on a tract is not much smaller than the voxel length, then streamlines may pass through part of a voxel without being counted. To avoid this, the program resamples streamlines such that the step size is one tenth of the smallest voxel dimension in the image. This increases the size of raw or oogl streamline output and incurs some performance penalty. The resample resolution can be controlled with this option or disabled altogether by passing a negative step size or by passing the -noresample option.")
+
+    noresample = traits.Bool(argstr='-noresample', desc="Disables resampling of input streamlines. Resampling is automatically disabled if the input model is voxels.")
+    outputtracts = traits.Enum('raw', 'voxels', 'oogl', argstr='-outputtracts %s', desc='output tract file type', usedefault=True)
+
+    outputroot = File(exists=False, argstr='-outputroot %s',
+                    mandatory=False, position=-1, #position=1, * JG MOD
+                    desc='root directory for output')
+
+    gzip = traits.Bool(argstr='-gzip', desc="save the output image in gzip format")
+    outputcp = traits.Bool(argstr='-outputcp', desc="output the connection probability map (Analyze image, float)")
+    outputsc = traits.Bool(argstr='-outputsc', desc="output the connection probability map (raw streamlines, int)")
+    outputacm = traits.Bool(argstr='-outputacm', desc="output all tracts in a single connection probability map (Analyze image)")
+    outputcbs = traits.Bool(argstr='-outputcbs', desc="outputs connectivity-based segmentation maps; requires target outputfile")
+
+class ProcStreamlinesOutputSpec(TraitedSpec):
+    proc = File(exists=True, desc='Processed Streamlines')
+
+class ProcStreamlines(StdOutCommandLine):
+    """
+    Process streamline data
+
+    This program does post-processing of streamline output from track. It can either output streamlines or connection probability maps.
+     * http://web4.cs.ucl.ac.uk/research/medic/camino/pmwiki/pmwiki.php?n=Man.procstreamlines
+
+    Examples
+    --------
+
+    >>> import nipype.interfaces.camino as cmon
+    >>> proc = cmon.ProcStreamlines()
+    >>> proc.inputs.in_file = 'tract_data.Bfloat'
+    >>> proc.inputs.outputtracts = 'oogl'
+    >>> proc.run()                  # doctest: +SKIP
+    """
+    _cmd = 'procstreamlines'
+    input_spec=ProcStreamlinesInputSpec
+    output_spec=ProcStreamlinesOutputSpec
+
+    def _list_outputs(self):
+        outputs = self.output_spec().get()
+        outputs['proc'] = os.path.abspath(self._gen_outfilename())
+        return outputs
+
+    def _gen_outfilename(self):
+        _, name , _ = split_filename(self.inputs.in_file)
+        return name + '_proc'
+
+
